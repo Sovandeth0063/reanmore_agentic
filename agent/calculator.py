@@ -1,0 +1,1 @@
+"""Deterministic checks for the fixed worksheet exercises."""
