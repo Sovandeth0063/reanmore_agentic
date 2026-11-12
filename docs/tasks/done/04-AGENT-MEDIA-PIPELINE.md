@@ -67,3 +67,21 @@ tutor can act on.
 ## Estimate
 
 1.5 days.
+
+## Closure (2026-11-07)
+
+Status: implemented; live provider and LiveKit media verification remain
+deferred-manual.
+
+- Added event-driven `MediaPipeline` coordination for Start and handwriting
+  checks.
+- Added safe frame-stream cleanup without storing raw media.
+- Worksheet parse and handwriting reads use structured vision boundaries.
+- Vision failures fall back to the fixed lesson or controlled retry response.
+- Low-confidence handwriting is routed through the tutor clarification path.
+- Added `tests/test_pipeline.py` covering worksheet start, snapshot failure
+  fallback, and handwriting checks.
+- Verified with:
+  `python -m py_compile agent\snapshots.py agent\tutor.py agent\vision.py tests\test_pipeline.py`
+- Deferred-manual: LiveKit track subscription, Silero VAD, faster-whisper,
+  Ollama, hosted vision, barge-in, and browser SpeechSynthesis.

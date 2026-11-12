@@ -1,148 +1,76 @@
-# AI Math Tutor: Tech Stack and Architecture
+# Snapshot Worksheet Tutor: Stack and Demo Overview
 
-This document is a short, shareable overview of the technology used by the Grade 3 worksheet tutor demo.
+This is the short overview of the [architecture](02-Architecture-ai-math-tutor.md)
+for the five-minute demo. The snapshot upload and turn API are implemented;
+the remaining UI work is the laptop dashboard with a local webcam (Task 32).
+There is no iPhone or LiveKit in the active design.
 
-## Demo Scope Update (2026-11-07)
+## What the audience sees
 
-The current five-minute demo uses one worksheet (`docs/image.png`, 12 items) and
-is more interactive than the scope below:
+1. The student asks the tutor to review the one printed worksheet.
+2. A still image checks whether the sheet is in camera range. If not, the tutor
+   asks the student to move it and takes another photo when they say "Ready."
+3. The tutor says the sheet mixes addition, subtraction, multiplication, and
+   division, then asks which exercise to start with.
+4. The student chooses a section and item, such as "A2." The tutor explains
+   that problem and answers spoken questions without taking more photos.
+5. When asked to check the student's writing, the tutor takes a fresh photo,
+   reads the selected answer, verifies it with the calculator, and responds.
 
-- Camera sees the whole sheet and the student's handwriting.
-- The agent parses the 12 printed items at Start and asks which one to begin.
-- The student chooses by voice; the agent guides step by step.
-- There is no hint ladder in this demo.
-- Handwriting is read on "check my answer" or on a pause.
-- Vision is hosted by default; audio, STT, and intent stay local.
-- A deterministic calculation module verifies every number and decomposes the
-  exercise into teachable steps.
-- Session memory stores the chosen exercise, step, and attempts in SQLite.
-- Target latency is about 2.5 s per turn.
-- The two-paper, 10-15 exercise scope is deferred.
+The webcam preview remains local to the laptop. Only requested still images are
+sent for vision. Speech is sent as short turns from the laptop microphone.
+There is no continuous AI video interpretation and no need to complete all 12
+items on stage.
 
-## Product Scope
+## Stack
 
-- English-only, hands-free math tutor
-- Grade 3 worksheet-based demo
-- One fixed worksheet (`docs/image.png`) with 12 exercises
-- One Start button
-- Worksheet snapshot at Start to parse the exercise list
-- Event-driven handwriting snapshot on "check my answer" or on a pause
-- Student chooses the exercise by voice
-- No hint ladder; natural step-by-step guidance
-- Fixed parts of the speech plus calculator-anchored guidance
-- Warm personality and per-session memory
-
-## Architecture
-
-```mermaid
-flowchart TB
-    B[Student Browser\nOne Start button + camera preview]
-    L[Self-hosted LiveKit\nWebRTC audio/video transport]
-    A[Python Tutor Agent\nState machine + session memory]
-    V[Silero VAD]
-    S[faster-whisper\nSpeech to text]
-    G[Ollama local model\nIntent + guidance phrasing]
-    W[Hosted Vision Model\nWorksheet + handwriting]
-    T[Browser SpeechSynthesis\nText to speech]
-    M[Fixed Lesson YAML\nOne sheet, 12 exercises]
-    R[Response Catalog\nFixed speech + guidance keys]
-    X[Calculation Module\nVerification + step model]
-    DB[(SQLite\nSession memory)]
-
-    B -->|continuous microphone audio| L
-    B -->|Mic + camera tracks| L
-    L --> A
-    A --> V
-    V --> S
-    S --> G
-    A -->|Start + check snapshots| W
-    W --> A
-    G --> T
-    M --> A
-    R --> A
-    A --> X
-    A --> DB
-    A -->|tutor audio| L
-    L --> B
-```
-
-## Technology Stack
-
-| Layer | Technology | Purpose |
+| Layer | Target choice | Role |
 | --- | --- | --- |
-| Frontend | TypeScript browser app | Shows the local camera preview and one Start button |
-| Camera and microphone | Browser `getUserMedia` | Captures the worksheet and student audio |
-| Real-time audio | LiveKit + WebRTC | Sends student audio and returns tutor audio with low latency |
-| Tutor agent | Python | Owns lesson state, intent handling, response selection, and session flow |
-| Voice activity detection | Silero VAD | Detects speech boundaries before transcription |
-| Speech-to-text | faster-whisper | Converts student speech into text locally |
-| Reasoning model | Ollama local model | Classifies intent and phrases guidance locally |
-| Vision | Hosted vision model (default) | Reads the printed items and handwriting |
-| Text-to-speech | Browser SpeechSynthesis | Produces the tutor's spoken response without another API provider |
-| Vision frames | LiveKit `rtc.VideoStream` | Samples event-driven frames for the vision model |
-| Lesson content | YAML | Stores one sheet and 12 exercise records |
-| Response catalog | Python/YAML | Stores fixed speech, guidance keys, praise, and corrections |
-| Calculation | Deterministic Python module | Verifies numbers and decomposes the exercise into steps |
-| Session memory | SQLite | Stores the chosen exercise, step, attempts, and turns |
-| Token server | FastAPI or Node | Creates short-lived LiveKit access tokens securely |
-| Storage | SQLite for demo | Stores session memory, transcripts, and calculator/tool logs |
+| Laptop UI | Browser dashboard on the laptop | Three panes, Start/End, webcam preview, framing guide, still capture, spoken output |
+| Camera | External 1080p webcam on a stand | Local preview and still images; no phone and no room transport |
+| Transport | HTTPS requests | Send one speech turn or still image per event; return response text |
+| Speech input | Laptop microphone + local faster-whisper | Turn-based transcription; no published microphone track |
+| Intent | Local Ollama model with structured output | Map speech to review, choice, question, check, repeat, next, or done |
+| Vision | Hosted vision/OCR model | Check sheet visibility, confirm printed items, read selected handwriting |
+| Tutor | Python state machine and response catalog | Own exercise choice, placement recovery, pacing, and feedback |
+| Lesson | Fixed YAML for A1-A6 and B1-B6 | Known expressions and guided steps for `docs/image.png` |
+| Arithmetic | Deterministic Python calculator | Verify answers and any spoken arithmetic result |
+| Speech output | Browser SpeechSynthesis | Speak the returned tutor text on the laptop |
+| Session data | SQLite | Keep selected item, step, attempts, and recent turns during the session |
 
-## Interaction Flow
+## Review decisions
 
-1. An adult grants camera and microphone permission and positions the camera so the whole sheet and the writing area are visible.
-2. The student presses the single Start button.
-3. The browser publishes microphone and camera tracks to LiveKit.
-4. The agent samples one frame and parses the 12 printed items with the hosted vision model.
-5. The calculation module validates the parsed expressions.
-6. The agent lists the items and asks which exercise to start with.
-7. The student chooses by voice; the agent maps the choice to an exercise id.
-8. The agent presents the exercise and guides the student step by step.
-9. The student writes and says "check my answer" or pauses.
-10. The agent samples a fresh frame; the vision model reads the handwriting and returns a confidence score.
-11. Low confidence produces a clarification question; high confidence goes to the calculation module.
-12. The calculation module verifies the answer and returns the next step or error type.
-13. The agent responds with calculator-anchored guidance.
-14. Session memory records the exercise, step, attempts, and last answer.
-15. Browser `SpeechSynthesis` speaks the response.
-16. The agent continues or asks which exercise to do next.
+- A missing or unreadable sheet leads to a placement prompt, never a guessed
+  summary.
+- OCR confirms the fixed worksheet and reads handwriting. The lesson file
+  supplies the problem and answer.
+- "Number two" is ambiguous across A and B; ask which section.
+- Conversation alone does not trigger a photo. "Check my writing" does.
+- An uncertain handwritten read leads to a question, never a wrong mark.
+- The five-minute script shows one complete exercise. The full sheet remains
+  available for student choice.
 
-## Important Design Rule
+## Current code versus remaining work
 
-The AI model does not invent numbers. It classifies intent and may phrase
-guidance, but every number it speaks comes from the calculation module. Fixed
-parts of the speech come from the response catalog, and low-confidence vision
-reads ask for clarification instead of correcting.
+The snapshot API, controller, lesson, calculator, vision, response, and session
+modules are implemented. The remaining work is the laptop dashboard and local
+webcam UI (Task 32), then the five-minute rehearsal (Task 27). No LiveKit
+worker, token endpoint, room client, Docker stack, or iPhone page is part of the
+active demo. See the [current implementation note](02-Architecture-ai-math-tutor.md#current-implementation-2026-11-12).
 
-## Project Files
+## Related documents
 
-```text
-agent/
-  main.py
-  tutor.py
-  calculator.py
-  lesson.py
-  responses.py
-  snapshots.py
-  vision.py
-  memory.py
-  prompts/tutor.md
-  lessons/grade3_demo.yaml
-server/token_server.py
-web/index.html
-web/src/
-tests/
-```
+- [Product requirements](01-PRD-ai-math-tutor.md)
+- [Detailed architecture](02-Architecture-ai-math-tutor.md)
+- [Laptop UI brief](ui-brief-snapshot-review.md)
+- [Webcam dashboard design](../superpowers/specs/2026-11-12-laptop-dashboard-webcam-design.md)
+- [Current demo runbook](../DEMO-RUNBOOK.md)
 
-## Official Documentation
+## Reference documentation
 
-- [LiveKit Agents](https://docs.livekit.io/agents/)
-- [LiveKit JavaScript SDK](https://docs.livekit.io/home/quickstarts/javascript/)
-- [Ollama](https://ollama.com/)
-- [faster-whisper](https://github.com/SYSTRAN/faster-whisper)
-- [Browser camera and microphone access](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
+- [Media capture in browsers](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia)
+- [Canvas still-image capture](https://developer.mozilla.org/en-US/docs/Web/API/HTMLCanvasElement/toBlob)
+- [Browser audio recording](https://developer.mozilla.org/en-US/docs/Web/API/MediaRecorder)
+- [Browser speech synthesis](https://developer.mozilla.org/en-US/docs/Web/API/SpeechSynthesis)
 - [FastAPI](https://fastapi.tiangolo.com/)
-
-## Related Project Documents
-
-- [Product Requirements](01-PRD-ai-math-tutor.md)
-- [Detailed Architecture](02-Architecture-ai-math-tutor.md)
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper)

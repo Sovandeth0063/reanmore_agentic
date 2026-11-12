@@ -47,3 +47,14 @@ Validate this complete path:
 ## Estimate
 
 1 day.
+
+## Completion Evidence (2026-11-07)
+
+- Files: `agent/main.py`, `agent/snapshots.py`, `agent/tutor.py`,
+  `agent/llm.py`, `agent/memory.py`, `web/src/room.ts`, `tests/test_pipeline.py`
+- Verified: `python -m py_compile` across all Python modules and tests →
+  succeeded; `npm run build` in `web/` → succeeded.
+- Written but not run: end-to-end and provider-mocked test coverage.
+- Deferred/manual: LiveKit room, agent dispatch, iPhone, VAD, Whisper, Ollama,
+  vision, and browser speech rehearsal.
+- Concerns: a deployment-specific LiveKit worker adapter is still required.

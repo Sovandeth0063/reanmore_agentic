@@ -66,3 +66,12 @@ worksheet tutor.
 ## Estimate
 
 0.5 day.
+
+## Completion Evidence (2026-11-07)
+
+- Files: `docs/DEMO-RUNBOOK.md`, `docs/tasks/09-DEMO-DAY-RUNBOOK.md`
+- Verified: documentation reviewed and `git diff --check` succeeded.
+- Written but not run: rehearsal checklist and recovery procedure.
+- Deferred/manual: three consecutive five-minute rehearsals and live provider
+  readiness checks.
+- Concerns: the iPhone 16 Pro Max and laptop must share a reachable network.

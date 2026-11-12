@@ -60,3 +60,14 @@ All 12 items from `docs/image.png`:
 ## Estimate
 
 0.75 day.
+
+## Completion Evidence (2026-11-07)
+
+- Files: `agent/lesson.py`, `agent/lessons/grade3_demo.yaml`,
+  `agent/responses.py`, `agent/tutor.py`, `tests/test_lesson.py`,
+  `tests/test_tutor.py`
+- Verified: `python -m py_compile` across all Python modules and tests →
+  succeeded.
+- Written but not run: lesson and tutor unit tests.
+- Deferred/manual: live voice-choice and reconnect rehearsal.
+- Concerns: provider and device integration remains external.

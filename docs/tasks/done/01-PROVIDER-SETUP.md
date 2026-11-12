@@ -55,3 +55,19 @@ None.
 ## Estimate
 
 0.5 day.
+
+## Closure (2026-11-07)
+
+Status: completed for repository setup; live provider verification remains
+deferred-manual until local services and a vision provider are configured.
+
+- Implemented validated environment loading in `agent/config.py`.
+- Added `.env.example` and secret exclusion in `.gitignore`.
+- Added dependency declarations in `requirements.txt`.
+- Added independent provider/import checks in `scripts/check_providers.py`.
+- Added configuration tests in `tests/test_config.py`.
+- Verified with:
+  `python -m py_compile agent\config.py scripts\check_providers.py tests\test_config.py`
+- Deferred-manual: LiveKit startup, Ollama model serving, faster-whisper model
+  loading, Silero VAD model loading, and hosted vision worksheet/handwriting
+  reads.

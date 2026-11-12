@@ -9,7 +9,9 @@ camera-visible worksheet session.
 
 - Show one prominent Start button.
 - Request camera and microphone permission after Start.
-- Prefer the rear camera on mobile devices.
+- Use the iPhone 16 Pro Max as the selected demo device.
+- Prefer the iPhone's rear camera (`facingMode: "environment"`); the laptop
+  webcam is not required.
 - Show a local camera preview and a small connection/listening status.
 - Include a framing guide that shows where the whole sheet and the writing area
   should sit. The guide must make it easy to keep the sheet in frame at an
@@ -33,7 +35,9 @@ camera-visible worksheet session.
 - The framing guide helps position the sheet and the writing area.
 - Tutor audio is audible in the browser.
 - The student can complete the flow without another button.
-- The UI works on the selected demo phone or tablet.
+- The UI works on Safari on the selected iPhone 16 Pro Max.
+- The laptop can host the web app while the iPhone publishes its camera and
+  microphone tracks through LiveKit.
 
 ## Dependencies
 
@@ -42,3 +46,17 @@ camera-visible worksheet session.
 ## Estimate
 
 0.5 day.
+
+## Closure (2026-11-07)
+
+Status: implemented; physical iPhone and browser build verification remain
+deferred-manual.
+
+- Implemented one-button LiveKit start flow for Safari on the iPhone 16 Pro Max.
+- Publishes microphone and rear-camera tracks with mobile-friendly constraints.
+- Added framing guide, status/reconnect handling, permission errors, wake-lock
+  handling, and camera cleanup on failed connection.
+- Verified indirectly through source inspection; no frontend package manifest or
+  build command is present in this repository.
+- Deferred-manual: iPhone Safari permission, LAN reachability, LiveKit join,
+  tutor audio playback, and camera framing rehearsal.

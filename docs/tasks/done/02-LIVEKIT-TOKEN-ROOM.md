@@ -32,3 +32,16 @@ Allow the browser to join a private LiveKit room and allow the Python agent to b
 ## Estimate
 
 0.25 day.
+
+## Closure (2026-11-07)
+
+Status: implemented; live LiveKit verification remains deferred-manual.
+
+- Implemented `GET /get-token` with unique rooms, 10-minute JWTs, publish and
+  subscribe grants, and `math-tutor` agent dispatch.
+- Added room cleanup when dispatch fails and guaranteed API client closure.
+- Added non-secret error handling and endpoint tests.
+- Verified with:
+  `python -m py_compile server\token_server.py tests\test_token_server.py`
+- Deferred-manual: LiveKit startup, browser join, agent arrival, and room
+  cleanup against a running LiveKit server.

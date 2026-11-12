@@ -64,3 +64,13 @@ tutor, so the agent never states an unverified number.
 ## Estimate
 
 0.5 day.
+
+## Completion Evidence (2026-11-07)
+
+- Files: `agent/calculator.py`, `tests/test_calculator.py`
+- Verified: `python -m py_compile` across all Python modules and tests →
+  succeeded.
+- Written but not run: calculator correctness, malformed-input, and error
+  classification tests.
+- Deferred/manual: observing spoken-number output during a live session.
+- Concerns: none for the offline calculator boundary.

@@ -1,5 +1,55 @@
 # Demo Implementation Specification
 
+## Snapshot Review Scope Update (2026-11-09)
+
+The [architecture PRD](../architecture/01-PRD-ai-math-tutor.md) describes the
+implemented snapshot path. This update supersedes the older LiveKit-based flow
+below:
+
+- The student asks the tutor to **review the worksheet** after Start. A
+  review request takes one still image; if the paper is missing, cut off, or
+  unreadable, the tutor asks for repositioning and a "Ready" retry.
+- Once confirmed, the tutor briefly summarizes the sheet's operation types:
+  A has addition/subtraction and B has multiplication/division. It then asks
+  for a section and item. The fixed 12-item lesson remains the source of
+  arithmetic truth.
+- Spoken exercise choice and step-by-step conversation use short speech
+  turns. They do not require a new image.
+- "Check my writing" takes a fresh still image of the selected exercise.
+  Uncertain reads trigger clarification; calculator-verified clear reads
+  produce feedback.
+- The five-minute presentation completes **one chosen exercise**, while all
+  12 remain selectable. Completing the whole sheet is not required.
+- The target uses a laptop webcam preview, HTTPS image and audio-turn uploads,
+  local STT/intent, hosted vision, deterministic calculation, browser
+  SpeechSynthesis, and session memory. Media is uploaded per review or turn;
+  there is no continuous video upload and no room transport.
+- Tasks 20-26 are implemented: the demo runs on the snapshot session API
+  (`server/session_api.py` and `agent/controller.py`). Task 32 builds the
+  laptop dashboard and webcam UI; Task 27 rehearses it; Tasks 28-31 are
+  follow-ups for latency, the speech fast path, image accuracy, and vision
+  feasibility. The older Fixed Scope, Demo Flow, script, and Definition of
+  Done below are retained as historical implementation context, not current
+  acceptance criteria.
+
+## Laptop Dashboard and Webcam Update (2026-11-12)
+
+The iPhone camera and LiveKit direction is superseded. The laptop is the whole
+experience:
+
+- The laptop shows a three-pane dashboard: fixed question paper, live webcam
+  answer sheet, and tutor review/feedback.
+- The child speaks to the laptop; the laptop microphone and speaker run the
+  conversation.
+- An external 1080p webcam on a stand provides the worksheet image. The laptop
+  captures one still on review/retry/check and uploads it to the existing
+  snapshot API.
+- There is no iPhone page, LiveKit room, token endpoint, Docker stack, or
+  continuous frame interpretation.
+- Task 32 implements the dashboard; Task 27 rehearses the five-minute flow on
+  the laptop. The webcam dashboard design is
+  [here](../superpowers/specs/2026-11-12-laptop-dashboard-webcam-design.md).
+
 ## Purpose
 
 Build an English-only Grade 3 worksheet tutor demo for a **five-minute
@@ -27,10 +77,21 @@ deterministic calculator.
 | B5 | `80 / 10` | `8` |
 | B6 | `25 / 5` | `5` |
 
+## History: The Original LiveKit Design
+
+The Fixed Scope, Demo Flow, and Five-Minute Demo Script sections below describe
+the superseded room-based and phone-camera designs. They are kept as history:
+where they mention an iPhone, joining a room, publishing tracks, or Silero VAD,
+the snapshot and laptop/webcam updates above win.
+
 ## Fixed Scope
 
 - One worksheet (the image above), 12 fixed exercises. No generation and no
   second paper.
+- The selected demo capture device is an iPhone 16 Pro Max. The laptop runs
+  the backend and does not need a webcam.
+- The iPhone opens the browser client and publishes its rear camera and
+  microphone tracks through LiveKit; the laptop is not the capture device.
 - Camera is placed at an angle that sees the whole sheet and the student's
   handwriting.
 - Student communicates by voice; one Start button, no other student-facing
@@ -73,10 +134,12 @@ deterministic calculator.
 
 ## Demo Flow
 
-1. An adult positions the camera so the whole sheet and the writing area are
-   visible.
-2. The student presses Start.
-3. The browser joins LiveKit and publishes microphone and camera tracks.
+1. An adult opens the browser client on the iPhone 16 Pro Max, grants camera
+   and microphone permission, and positions the rear camera so the whole sheet
+   and writing area are visible.
+2. The student presses Start on the iPhone.
+3. The iPhone browser joins LiveKit and publishes the phone's microphone and
+   camera tracks; the laptop remains the backend host.
 4. The agent samples one frame, parses the 12 printed items, validates them
    with the calculator, and briefly confirms what it sees.
 5. The agent asks which exercise the student would like to start with.
@@ -94,7 +157,7 @@ deterministic calculator.
 
 | Time | Beat | Fallback |
 | --- | --- | --- |
-| 0:00-0:45 | Show the sheet, press Start, camera preview appears | Show backup screenshot |
+| 0:00-0:45 | Open the iPhone 16 Pro Max browser, show the sheet, press Start, and confirm the camera preview | Show backup screenshot |
 | 0:45-1:30 | Agent lists the 12 items and asks which to start | Show parsed list |
 | 1:30-2:00 | Student chooses, agent presents the exercise | Choose a pre-agreed item |
 | 2:00-3:15 | Agent guides step by step while the student writes | Speak the steps yourself |
@@ -117,8 +180,8 @@ deterministic calculator.
 
 ## Definition Of Done
 
-The demo is ready when an adult can start a session, the agent reads the 12
-items from the sheet, the student chooses one by voice, the agent guides the
-student through it while seeing their handwriting, the calculator verifies the
-answer, the tutor responds correctly, and the full flow completes three times
-in a row inside five minutes on the demo device.
+The demo is ready when an adult can start a session on the laptop, the external
+webcam sees the 12 items and the writing, the student chooses one by voice, the
+tutor guides the student through it, the calculator verifies the answer, the
+tutor responds correctly, and the full flow completes three times in a row
+inside five minutes on the laptop with the external webcam.

@@ -55,3 +55,15 @@ it behaves like a human tutor across turns.
 ## Estimate
 
 0.5 day.
+
+## Completion Evidence (2026-11-07)
+
+- Files: `agent/prompts/tutor.md`, `agent/memory.py`, `agent/tutor.py`,
+  `tests/test_memory.py`, `tests/test_tutor.py`
+- Verified: `python -m py_compile` across all Python modules and tests →
+  succeeded.
+- Written but not run: memory persistence, deletion, state-block, and reconnect
+  tests.
+- Deferred/manual: live reconnect behavior through the deployed room.
+- Concerns: retention cleanup is session-end deletion; scheduled retention is
+  outside the demo scope.

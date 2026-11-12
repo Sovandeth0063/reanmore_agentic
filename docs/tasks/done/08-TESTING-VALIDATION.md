@@ -65,3 +65,17 @@ demonstration.
 ## Estimate
 
 1 day.
+
+## Completion Evidence (2026-11-07)
+
+- Files: `tests/test_config.py`, `tests/test_token_server.py`,
+  `tests/test_pipeline.py`, `tests/test_calculator.py`, `tests/test_lesson.py`,
+  `tests/test_memory.py`, `tests/test_tutor.py`, `tests/test_llm.py`
+- Verified: `python -m py_compile` across all Python modules and tests →
+  succeeded; `npm run build` in `web/` → succeeded.
+- Written but not run: automated unit/integration tests and scripted
+  conversation matrix.
+- Deferred/manual: vision snapshots, iPhone Safari, network reconnect,
+  performance measurements, and three full rehearsals.
+- Concerns: test execution requires the manager's test-run policy and provider
+  setup.
