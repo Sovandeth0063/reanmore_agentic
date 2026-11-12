@@ -1,24 +1,15 @@
-lesson: "Worksheet demo: addition and making 100"
-paper_count: 2
-exercise_count: "10-15"
-papers:
-  - id: paper1
-    source: worksheet_1
-  - id: paper2
-    source: worksheet_2
-# Add the remaining fixed worksheet items here. Do not generate exercises at runtime.
+lesson: "Worksheet demo: one sheet, 12 exercises"
+version: 1
 exercises:
-  - id: ex1
-    paper_id: paper1
-    worksheet_section: A
-    worksheet_item: 1
-    problem: "4 + 5 + 6"
-    answer: 15
-    verification_expression: "4 + 5 + 6"
-  - id: ex2
-    paper_id: paper1
-    worksheet_section: B
-    worksheet_item: 1
-    problem: "30 + __ = 100"
-    answer: 70
-    verification_expression: "100 - 30"
+  - {id: A1, section: A, item: 1, problem: "4 + 5 + 6", answer: 15, verification_expression: "4 + 5 + 6", steps: [{index: 1, prompt: "Add 4 and 5", expected_intermediate: 9}, {index: 2, prompt: "Add 6 to 9", expected_intermediate: 15}], praise: "Great adding!"}
+  - {id: A2, section: A, item: 2, problem: "63 + 24", answer: 87, verification_expression: "63 + 24", steps: [{index: 1, prompt: "Add the ones", expected_intermediate: 7}, {index: 2, prompt: "Add the tens", expected_intermediate: 87}], praise: "Great place-value work!"}
+  - {id: A3, section: A, item: 3, problem: "85 - 33", answer: 52, verification_expression: "85 - 33", steps: [{index: 1, prompt: "Subtract the ones", expected_intermediate: 2}, {index: 2, prompt: "Subtract the tens", expected_intermediate: 52}], praise: "Great subtracting!"}
+  - {id: A4, section: A, item: 4, problem: "71 - 8", answer: 63, verification_expression: "71 - 8", steps: [{index: 1, prompt: "Subtract 8 ones", expected_intermediate: 63}], praise: "You kept your place values!"}
+  - {id: A5, section: A, item: 5, problem: "63 - 5", answer: 58, verification_expression: "63 - 5", steps: [{index: 1, prompt: "Subtract 5 ones", expected_intermediate: 58}], praise: "Nice subtraction!"}
+  - {id: A6, section: A, item: 6, problem: "100 - 48", answer: 52, verification_expression: "100 - 48", steps: [{index: 1, prompt: "Subtract the ones and tens", expected_intermediate: 52}], praise: "You handled the zero carefully!"}
+  - {id: B1, section: B, item: 1, problem: "6 x 4", answer: 24, verification_expression: "6 * 4", steps: [{index: 1, prompt: "Think of 4 groups of 6", expected_intermediate: 24}], praise: "Great groups!"}
+  - {id: B2, section: B, item: 2, problem: "8 x 3", answer: 24, verification_expression: "8 * 3", steps: [{index: 1, prompt: "Think of 3 groups of 8", expected_intermediate: 24}], praise: "Great multiplication!"}
+  - {id: B3, section: B, item: 3, problem: "9 x 3", answer: 27, verification_expression: "9 * 3", steps: [{index: 1, prompt: "Think of 3 groups of 9", expected_intermediate: 27}], praise: "You know that fact!"}
+  - {id: B4, section: B, item: 4, problem: "20 / 4", answer: 5, verification_expression: "20 / 4", steps: [{index: 1, prompt: "Share 20 into 4 equal groups", expected_intermediate: 5}], praise: "Great sharing!"}
+  - {id: B5, section: B, item: 5, problem: "80 / 10", answer: 8, verification_expression: "80 / 10", steps: [{index: 1, prompt: "Share 80 into 10 equal groups", expected_intermediate: 8}], praise: "Great division!"}
+  - {id: B6, section: B, item: 6, problem: "25 / 5", answer: 5, verification_expression: "25 / 5", steps: [{index: 1, prompt: "Share 25 into 5 equal groups", expected_intermediate: 5}], praise: "Great work!"}

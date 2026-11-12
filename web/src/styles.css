@@ -1,1 +1,64 @@
-/* Minimal student-facing layout. */
+:root {
+  color-scheme: dark;
+  font-family: system-ui, sans-serif;
+}
+
+body {
+  margin: 0;
+  background: #101827;
+  color: #f7fafc;
+}
+
+.tutor {
+  display: grid;
+  gap: 1rem;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 1rem;
+  text-align: center;
+}
+
+.camera-shell {
+  position: relative;
+  overflow: hidden;
+  border-radius: 1rem;
+  background: #000;
+}
+
+video {
+  display: block;
+  width: 100%;
+  min-height: 18rem;
+  object-fit: cover;
+}
+
+.framing-guide {
+  position: absolute;
+  inset: 12% 8%;
+  display: grid;
+  place-items: end center;
+  border: 3px solid #f6c344;
+  border-radius: 0.75rem;
+  pointer-events: none;
+}
+
+.framing-guide span {
+  margin: 0 0 0.5rem;
+  padding: 0.35rem 0.6rem;
+  background: #101827cc;
+  font-size: 0.8rem;
+}
+
+button {
+  min-height: 3.5rem;
+  border: 0;
+  border-radius: 0.75rem;
+  background: #4ade80;
+  color: #082f19;
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.looking {
+  color: #f6c344;
+}

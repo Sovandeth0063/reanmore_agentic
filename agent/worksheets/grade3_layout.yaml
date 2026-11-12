@@ -1,0 +1,29 @@
+# Fixed layout of the printed grade-three practice sheet (docs/image.png).
+#
+# Each box is the rounded item box on the reference sheet -- the printed item
+# label, expression, and answer space together -- not just the answer blank.
+# Coordinates are normalized 0-1 image coordinates: [x0, y0, x1, y1] with the
+# origin at the top-left of the upright sheet.
+#
+# The reference sheet is upright and cropped at the paper edge. A camera photo
+# is rectified to the sheet's outer corners first; only then do these boxes
+# apply to the rectified image.
+reference_image: image.png
+note: >-
+  Normalized 0-1 boxes for the twelve rounded items on the upright reference
+  sheet. Rectify a camera photo to the sheet's outer corners before using
+  these boxes; the boxes do not apply to the raw, angled photo.
+
+items:
+  A1: [0.050, 0.344, 0.489, 0.428]
+  A2: [0.522, 0.344, 0.961, 0.428]
+  A3: [0.050, 0.452, 0.489, 0.535]
+  A4: [0.522, 0.452, 0.961, 0.535]
+  A5: [0.050, 0.560, 0.489, 0.644]
+  A6: [0.522, 0.560, 0.961, 0.644]
+  B1: [0.050, 0.689, 0.489, 0.773]
+  B2: [0.522, 0.689, 0.961, 0.773]
+  B3: [0.050, 0.796, 0.489, 0.880]
+  B4: [0.522, 0.796, 0.961, 0.880]
+  B5: [0.050, 0.903, 0.489, 0.977]
+  B6: [0.522, 0.903, 0.961, 0.977]
