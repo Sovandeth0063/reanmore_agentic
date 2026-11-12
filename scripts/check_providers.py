@@ -48,6 +48,57 @@ def _vision_api_label(settings: Settings) -> str:
     return settings.vision_api
 
 
+def _check_intent(settings: Settings) -> bool:
+    """The selected classifier has a model and, when hosted, a route and key."""
+    if settings.intent_provider == "opencode":
+        return bool(
+            settings.intent_model
+            and settings.intent_base_url
+            and (settings.intent_api_key or settings.vision_api_key)
+        )
+    return bool(settings.ollama_model)
+
+
+def _intent_label(settings: Settings) -> str:
+    """Name the configured classifier without printing a key or URL params."""
+    if settings.intent_provider == "opencode":
+        return f"opencode ({settings.intent_model or 'unset'})"
+    return f"local ollama ({settings.ollama_model or 'unset'})"
+
+
+def _live_intent(settings: Settings) -> tuple[bool, str]:
+    """Classify one fixed, short utterance and report only the intent name.
+
+    The transcript, prompt, headers, and key are never printed; a failure
+    reports the exception type and the client's redacted message.
+    """
+    try:
+        import httpx
+
+        from agent.llm import IntentError, build_intent_client
+    except ImportError:
+        return False, "intent client is not importable"
+
+    http = httpx.Client(timeout=15.0)
+    client = build_intent_client(
+        settings, http=http, session_id="provider-check"
+    )
+    try:
+        intent = client.interpret(
+            "can you help me with this one",
+            {"state_block": ""},
+            {},
+        )
+    except IntentError as error:
+        return False, f"{type(error).__name__}: {error}"
+    except Exception as error:  # noqa: BLE001 - redact anything unexpected
+        return False, f"unexpected {type(error).__name__}"
+    finally:
+        http.close()
+    provider = getattr(client, "provider", settings.intent_provider)
+    return True, f"{intent.intent} via {provider}"
+
+
 def _live_vision(settings: Settings) -> tuple[bool, str]:
     """Parse the demo worksheet once and report the count or a redacted error.
 
@@ -91,8 +142,10 @@ def main(*, live: bool = False) -> int:
         ("Ollama", _check_ollama(settings)),
         ("faster-whisper import", _check_import("faster_whisper")),
         ("Vision configuration", _check_vision(settings)),
+        ("Intent configuration", _check_intent(settings)),
     ]
     print(f"Vision API: {_vision_api_label(settings)}")
+    print(f"Intent API: {_intent_label(settings)}")
     for name, passed in checks:
         print(f"{name}: {'PASS' if passed else 'FAIL'}")
 
@@ -102,7 +155,12 @@ def main(*, live: bool = False) -> int:
 
     live_passed, detail = _live_vision(settings)
     print(f"Vision live check: {'PASS' if live_passed else 'FAIL'} ({detail})")
-    return 0 if checks_passed and live_passed else 1
+    intent_passed, intent_detail = _live_intent(settings)
+    print(
+        f"Intent live check: {'PASS' if intent_passed else 'FAIL'} "
+        f"({intent_detail})"
+    )
+    return 0 if checks_passed and live_passed and intent_passed else 1
 
 
 if __name__ == "__main__":
@@ -110,7 +168,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--live",
         action="store_true",
-        help="send docs/image.png to the configured vision provider",
+        help=(
+            "send docs/image.png to the vision provider and one short intent "
+            "request to the intent provider"
+        ),
     )
     args = parser.parse_args()
     sys.exit(main(live=args.live))

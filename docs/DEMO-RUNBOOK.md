@@ -99,7 +99,7 @@ debug.
    for a clearer photo instead of grading.
 6. **3:45-4:15:** Show the verified response and praise.
 7. **4:15-5:00:** Explain the snapshot session API, laptop webcam, local
-   audio/intent, hosted vision, and the deterministic calculator.
+   audio, hosted intent and vision, and the deterministic calculator.
 
 ## Recovery
 
@@ -108,7 +108,8 @@ debug.
   the dev server is up, then use the backup recording.
 - Worksheet not confirmed: adjust the paper and retry the review. The tutor
   never lists exercises before placement is confirmed.
-- Ollama unavailable: use the fixed response catalog and calculator.
+- Ollama unavailable: clear commands still work; ambiguous turns fall back to
+  the fixed response catalog and calculator.
 - Vision unavailable: use the spoken-only fallback or the backup recording; the
   tutor never claims to have read the paper.
 - Unclear handwriting: ask the student to repeat or rewrite; never correct it.
@@ -132,6 +133,39 @@ check parses all 12 fixed expressions in about 6 s; `deepseek-v4.1-flash` also
 works at 16-22 s, and local `gemma4:e4b` is the no-key fallback at about 23 s.
 Task 31's suitability question for non-coding OCR traffic remains open; this is
 a working demo choice, not a production approval.
+
+## Intent classifier choice
+
+Clear commands ("repeat", "ready", "next", "done", "first step", a review or
+writing check, and a complete id such as "A2") are answered by the deterministic
+parser and never reach a classifier. Every other utterance goes to
+**`claude-haiku-5-5`** through the same OpenCode Go OpenAI-compatible route, with
+a 10-second timeout. If that call fails for any reason the turn falls back once
+to the local `OLLAMA_MODEL`; if both fail, the existing retryable service text
+is returned and the session stays usable. The hosted call is never retried in a
+loop.
+
+The intent route reuses `VISION_API_KEY` (the OpenCode Go key); there is no
+separate intent key. The `.env` block is:
+
+```text
+INTENT_PROVIDER=opencode
+INTENT_MODEL=claude-haiku-5-5
+INTENT_BASE_URL=https://opencode.ai/inference/go/openai/v1
+OLLAMA_MODEL=<local fallback pulled on this laptop>
+```
+
+The tool log records one `intent.interpret` row for every turn that reaches a
+classifier, with only the serving provider (`opencode` or `ollama`) on success,
+or the exception type on failure. It never records the transcript, prompt, or
+key; a turn served by the fallback reports `ollama`. The provider check reports
+the configured classifier and, with `--live`, sends one short text-only request
+and prints only the recognized intent:
+
+```
+py -3.10 scripts/check_providers.py
+py -3.10 scripts/check_providers.py --live
+```
 
 ## Selected-work crop accuracy
 
@@ -165,8 +199,10 @@ py -3.10 scripts/benchmark_turn.py --label after --audio <utterance.pcm> --image
 ```
 
 Clear commands ("repeat", "ready", "next", "done", "first step", a review or
-writing check, and a complete id such as "A2") skip the local Ollama classifier
-and appear as `intent.fast_path`; every other utterance still reaches Ollama.
+writing check, and a complete id such as "A2") skip all classifiers and appear
+as `intent.fast_path`; every other utterance reaches the configured intent
+provider (hosted Haiku with a local Ollama fallback) and appears as
+`intent.interpret`.
 The browser turn detector is unchanged at 700 ms of silence until Task 27
 measures real laptop microphone recordings, so do not tune that window from a
 synthetic-only test.

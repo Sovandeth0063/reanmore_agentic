@@ -70,7 +70,7 @@ iPhone and no LiveKit in the active demo.
 | Backend | Python, FastAPI |
 | Speech boundaries | Browser turn detector |
 | Speech-to-text | faster-whisper (local) |
-| Intent and guidance phrasing | Ollama (local) |
+| Intent classification | Hosted Haiku via OpenCode Go; local Ollama fallback (clear commands are deterministic) |
 | Vision | Hosted model by default; local fallback |
 | Arithmetic | Deterministic Python calculator (no LLM math) |
 | Text-to-speech | Browser `SpeechSynthesis` |
@@ -88,8 +88,10 @@ These are not preferences. They define the demo.
   the current turn.
 - A low-confidence handwriting read **asks for clarification**; it never
   corrects.
-- Hosted vision is the default. Audio capture, browser turn detection,
-  speech-to-text, and intent stay local.
+- Hosted vision is the default. Audio capture and browser turn detection stay
+  local, as does the speech-to-text. Clear intent commands are deterministic;
+  only the ambiguous remainder calls the hosted intent classifier, with the
+  local model as its fallback.
 - The student chooses the exercise by voice; there is one Start button.
 - The laptop is the UI, microphone, speaker, and AI host. An external webcam
   provides the image; there is no iPhone or room transport.
@@ -109,7 +111,7 @@ provider and webcam validation remain external integration work.
 | Demo spec, task cards, task register | Written and current |
 | Architecture docs (`docs/architecture/`) | Updated to the laptop/webcam snapshot path; old rooms are history |
 | `README.md`, `.env.example` | Updated to the laptop/webcam path |
-| `agent/config.py` | Implemented; validates hosted/local vision settings, no room transport |
+| `agent/config.py` | Implemented; validates hosted/local vision and optional hosted intent settings, no room transport |
 | `agent/calculator.py`, `lesson.py`, `responses.py`, `tutor.py` | Core implementations: calculator, fixed lesson, response catalog, placement gate, and state machine |
 | `agent/controller.py` | Provider-neutral session controller for the HTTP contract |
 | `agent/vision.py`, `llm.py`, `stt.py`, `memory.py` | Implemented with structured boundaries and SQLite session state |
@@ -192,7 +194,10 @@ WHISPER_MODEL
 VISION_PROVIDER        # hosted (default) or local
 VISION_BASE_URL        # hosted only; base URL before /chat/completions
 VISION_MODEL
-VISION_API_KEY         # hosted only
+VISION_API_KEY         # hosted only; also used by intent
+INTENT_PROVIDER        # opencode (demo) or ollama
+INTENT_MODEL           # opencode only, e.g. claude-haiku-5-5
+INTENT_BASE_URL        # opencode only; base URL before /chat/completions
 LOG_LEVEL
 DB_URL
 ```
@@ -208,7 +213,7 @@ agent/                 Python tutor agent
   responses.py         fixed response catalog
   controller.py        provider-neutral session controller
   vision.py            worksheet and handwriting reads
-  llm.py               Ollama intent and guidance
+  llm.py               hosted/local intent classification
   stt.py               faster-whisper transcription
   tutor.py             placement gate and state machine
   memory.py            per-session SQLite state

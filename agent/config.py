@@ -7,8 +7,10 @@ from urllib.parse import urlparse
 
 
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
+DEFAULT_INTENT_PROVIDER = "ollama"
+INTENT_PROVIDERS = {"ollama", "opencode"}
 # Never expose these through repr() or public_dict(); they are credentials.
-PRIVATE_SETTING_FIELDS = ("vision_api_key",)
+PRIVATE_SETTING_FIELDS = ("vision_api_key", "intent_api_key")
 
 
 class ConfigurationError(ValueError):
@@ -25,6 +27,12 @@ class Settings:
     vision_base_url: str = ""
     vision_model: str = ""
     vision_api_key: str = field(default="", repr=False)
+    # Intent classification: local Ollama by default for compatibility; the
+    # hosted OpenAI-compatible route is selected explicitly in `.env`.
+    intent_provider: str = DEFAULT_INTENT_PROVIDER
+    intent_model: str = ""
+    intent_base_url: str = ""
+    intent_api_key: str = field(default="", repr=False)
     log_level: str = "INFO"
     db_url: str = "sqlite:///./data/tutor.db"
 
@@ -47,9 +55,25 @@ class Settings:
             "vision_base_url": os.getenv("VISION_BASE_URL", ""),
             "vision_model": os.getenv("VISION_MODEL", ""),
             "vision_api_key": os.getenv("VISION_API_KEY", ""),
+            "intent_provider": os.getenv(
+                "INTENT_PROVIDER", DEFAULT_INTENT_PROVIDER
+            ).lower(),
+            "intent_model": os.getenv("INTENT_MODEL", ""),
+            "intent_base_url": os.getenv("INTENT_BASE_URL", ""),
+            "intent_api_key": os.getenv("INTENT_API_KEY", ""),
             "log_level": os.getenv("LOG_LEVEL", "INFO"),
             "db_url": os.getenv("DB_URL", "sqlite:///./data/tutor.db"),
         }
+
+        # One Go key is enough: an empty INTENT_API_KEY reuses VISION_API_KEY.
+        values["intent_api_key"] = (
+            values["intent_api_key"] or values["vision_api_key"]
+        )
+        intent_provider = values["intent_provider"]
+        if intent_provider not in INTENT_PROVIDERS:
+            raise ConfigurationError(
+                "INTENT_PROVIDER must be either ollama or opencode"
+            )
 
         provider = values["vision_provider"]
         if provider not in {"hosted", "local"}:
@@ -71,6 +95,15 @@ class Settings:
                 "VISION_BASE_URL must be an absolute http or https URL"
             )
 
+        # The hosted intent route is validated only when it is selected; the
+        # local default must keep working without any intent variables.
+        if intent_provider == "opencode" and values["intent_base_url"] and (
+            urlparse(values["intent_base_url"]).scheme not in {"http", "https"}
+        ):
+            raise ConfigurationError(
+                "INTENT_BASE_URL must be an absolute http or https URL"
+            )
+
         if require_secrets:
             required = [
                 name
@@ -81,6 +114,13 @@ class Settings:
                 required.append("VISION_BASE_URL")
             if provider == "hosted" and not values["vision_api_key"]:
                 required.append("VISION_API_KEY")
+            if intent_provider == "opencode":
+                if not values["intent_model"]:
+                    required.append("INTENT_MODEL")
+                if not values["intent_base_url"]:
+                    required.append("INTENT_BASE_URL")
+                if not values["intent_api_key"]:
+                    required.append("INTENT_API_KEY")
             if required:
                 raise ConfigurationError(
                     "Missing required provider configuration: "

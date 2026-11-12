@@ -19,7 +19,13 @@ from PIL import Image
 from agent.config import Settings
 from agent.controller import TutorController
 from agent.lesson import load_lesson
-from agent.llm import IntentError, TutorIntent
+from agent.llm import (
+    FallbackIntentClient,
+    IntentError,
+    OllamaClient,
+    OpenAIIntentClient,
+    TutorIntent,
+)
 from agent.memory import SessionStore
 from agent.responses import placement_prompt, select_response
 from agent.sheet_layout import load_layout
@@ -100,6 +106,7 @@ class FakeIntent:
         self.intent = TutorIntent("REVIEW", None, None, None)
         self.error = None
         self.calls = []
+        self.provider = "ollama"
 
     def interpret(self, transcript, state, exercise):
         self.calls.append((transcript, state, exercise))
@@ -298,7 +305,7 @@ class LifecycleTests(SessionApiTestCase):
         ]
         for name in (
             "stt.transcribe",
-            "ollama.interpret",
+            "intent.interpret",
             "vision.parse_worksheet",
             "vision.read_handwriting",
         ):
@@ -737,7 +744,76 @@ class FastPathTests(SessionApiTestCase):
         # No fast-path row: STT is followed by the model call, as before.
         self.assertEqual(
             self.tool_names(session_id)[rows:],
-            ["stt.transcribe", "ollama.interpret"],
+            ["stt.transcribe", "intent.interpret"],
+        )
+
+
+class IntentToolLogTests(SessionApiTestCase):
+    def tool_names(self, session_id) -> list[str]:
+        return [
+            row["name"]
+            for row in self.store.connection.execute(
+                "SELECT name FROM tool_calls WHERE session_id = ? "
+                "ORDER BY id",
+                (session_id,),
+            )
+        ]
+
+    def last_tool(self, session_id):
+        return self.store.connection.execute(
+            "SELECT name, details, success FROM tool_calls "
+            "WHERE session_id = ? ORDER BY id DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+
+    def test_provider_is_recorded_on_success(self) -> None:
+        session_id = self.create_session()
+        self.place_worksheet(session_id)
+        self.intent.provider = "opencode"
+        self.set_turn(
+            "can you help me with this one",
+            TutorIntent("OFF_TOPIC", None, None, None),
+        )
+
+        response = self.turn(session_id)
+
+        self.assertEqual(response.status_code, 200)
+        row = self.last_tool(session_id)
+        self.assertEqual(row["name"], "intent.interpret")
+        self.assertEqual(row["details"], "opencode")
+        self.assertEqual(row["success"], 1)
+
+    def test_exception_type_is_recorded_on_failure(self) -> None:
+        session_id = self.create_session()
+        self.place_worksheet(session_id)
+        self.intent.error = IntentError("provider down")
+        self.set_turn(
+            "can you help me with this one",
+            TutorIntent("OFF_TOPIC", None, None, None),
+        )
+
+        response = self.turn(session_id)
+
+        self.assertEqual(response.json()["status"], "listening")
+        self.assertEqual(
+            response.json()["tutor_text"], select_response("service_error")
+        )
+        row = self.last_tool(session_id)
+        self.assertEqual(row["name"], "intent.interpret")
+        self.assertEqual(row["details"], "IntentError")
+        self.assertEqual(row["success"], 0)
+
+    def test_fast_path_never_logs_a_classifier_row(self) -> None:
+        session_id = self.create_session()
+        self.place_worksheet(session_id)
+        rows = len(self.tool_names(session_id))
+
+        self.set_turn("say that again", TutorIntent("REPEAT", None, None, None))
+        self.turn(session_id)
+
+        self.assertEqual(
+            self.tool_names(session_id)[rows:],
+            ["stt.transcribe", "intent.fast_path"],
         )
 
 
@@ -1230,6 +1306,57 @@ class SharedRuntimeTests(unittest.TestCase):
         self.assertIs(first.intent.http, runtime.http)
         self.assertIs(second.vision.http, runtime.http)
         self.assertIs(second.intent.http, runtime.http)
+
+    def _default_controller(self, settings):
+        class FakeClient:
+            def __init__(self, *args, **kwargs) -> None:
+                self.closed = 0
+
+            def close(self) -> None:
+                self.closed += 1
+
+        with patch("httpx.Client", FakeClient):
+            app = create_app(
+                settings=settings,
+                store=self.store,
+                lesson=self.lesson,
+            )
+            runtime = app.state.runtime
+            runtime.ensure()
+            controller = runtime.controller_factory("intent-session")
+        return runtime, controller
+
+    def test_local_settings_build_the_ollama_intent_client(self) -> None:
+        runtime, controller = self._default_controller(
+            Settings(ollama_model="local-model")
+        )
+
+        self.assertIsInstance(controller.intent, OllamaClient)
+        self.assertIs(controller.intent.http, runtime.http)
+
+    def test_opencode_settings_build_hosted_intent_with_local_fallback(
+        self,
+    ) -> None:
+        settings = Settings(
+            ollama_model="local-model",
+            intent_provider="opencode",
+            intent_model="claude-haiku-5-5",
+            intent_base_url="https://opencode.ai/inference/go/openai/v1",
+            intent_api_key="go-key",
+        )
+
+        runtime, controller = self._default_controller(settings)
+
+        self.assertIsInstance(controller.intent, FallbackIntentClient)
+        self.assertEqual(controller.intent.provider, "opencode")
+        self.assertIsInstance(controller.intent.primary, OpenAIIntentClient)
+        self.assertIsInstance(controller.intent.fallback, OllamaClient)
+        # The tutoring session id is the stable hosted attribution header.
+        self.assertEqual(
+            controller.intent.primary.session_id, "intent-session"
+        )
+        self.assertIs(controller.intent.primary.http, runtime.http)
+        self.assertIs(controller.intent.fallback.http, runtime.http)
 
 
 class RuntimeShutdownTests(unittest.TestCase):
