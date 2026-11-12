@@ -1,9 +1,9 @@
 import { defineConfig } from "vite";
 import basicSsl from "@vitejs/plugin-basic-ssl";
 
-// HTTPS is required so iPhone Safari treats the dev server as a secure context
-// and allows getUserMedia over the LAN (architecture 02 §8). The certificate is
-// self-signed and development-only.
+// HTTPS gives the laptop browser a secure context for the webcam and
+// microphone (getUserMedia). The certificate is self-signed and development
+// only; the dev server proxies the session API on the same origin.
 export default defineConfig({
   plugins: [basicSsl()],
   server: {

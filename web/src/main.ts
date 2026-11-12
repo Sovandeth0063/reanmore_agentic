@@ -3,9 +3,9 @@ import { createSessionClient } from "./client.ts";
 import { createRecorder } from "./recorder.ts";
 import { createTutorSession } from "./session.ts";
 import type { TutorSpeech } from "./session.ts";
-import { createTutorUi } from "./ui.ts";
+import { createTutorDashboard } from "./ui.ts";
 
-const ui = createTutorUi();
+const ui = createTutorDashboard();
 const client = createSessionClient({
   fetch: (input, init) => window.fetch(input, init),
 });
@@ -31,14 +31,22 @@ deliverSpeechStart = () => {
 };
 
 ui.startButton.addEventListener("click", () => {
+  ui.setStartError(null);
   ui.setStatus("Requesting camera and microphone...");
   ui.setLooking(false);
   ui.setStartEnabled(false);
   void session.start().catch((error: unknown) => {
+    // The session already stopped the camera/recorder and restored the Start
+    // panel; here we only surface why it could not start.
     ui.setStartEnabled(true);
-    ui.showStart();
-    ui.setLooking(false);
-    ui.setStatus(startErrorMessage(error));
+    ui.setStartError(startErrorMessage(error));
+  });
+});
+
+ui.endButton.addEventListener("click", () => {
+  ui.setEndEnabled(false);
+  void session.stop().finally(() => {
+    ui.setEndEnabled(true);
   });
 });
 
@@ -82,7 +90,7 @@ function startErrorMessage(error: unknown): string {
   if (error instanceof DOMException) {
     switch (error.name) {
       case "NotAllowedError":
-        return "Camera and microphone permission are needed to start.";
+        return "Camera and microphone permission are needed to start. Allow access for this site, then press Start again.";
       case "NotFoundError":
         return "No camera or microphone was found on this device.";
       case "NotReadableError":
