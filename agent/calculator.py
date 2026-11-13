@@ -71,6 +71,78 @@ def _evaluate_node(node: ast.AST) -> int:
     raise ValueError("unsupported_expression")
 
 
+_NUMBER_WORDS: dict[str, int] = {
+    "zero": 0,
+    "one": 1,
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+    "eleven": 11,
+    "twelve": 12,
+    "thirteen": 13,
+    "fourteen": 14,
+    "fifteen": 15,
+    "sixteen": 16,
+    "seventeen": 17,
+    "eighteen": 18,
+    "nineteen": 19,
+    "twenty": 20,
+    "thirty": 30,
+    "forty": 40,
+    "fifty": 50,
+    "sixty": 60,
+    "seventy": 70,
+    "eighty": 80,
+    "ninety": 90,
+}
+
+_TENS_WORDS = {
+    word: value
+    for word, value in _NUMBER_WORDS.items()
+    if value >= 20 and value % 10 == 0
+}
+
+
+def parse_number(value: object) -> int | None:
+    """Read an integer from digits or an English number word (0-100).
+
+    Accepts ``15``, ``"15"``, ``"nine"``, ``"eighty-seven"``, ``"twenty one"``
+    and ``"one hundred"``. Anything else, including ``None`` and ``bool``,
+    returns ``None`` so callers can tell "unreadable" from a real answer.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value.is_integer() else None
+    if not isinstance(value, str):
+        return None
+    text = value.strip().lower()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    words = text.replace("-", " ").split()
+    if len(words) == 1:
+        return _NUMBER_WORDS.get(words[0])
+    if len(words) == 2:
+        tens, ones = words
+        if tens in _TENS_WORDS and _NUMBER_WORDS.get(ones, 0) in range(1, 10):
+            return _TENS_WORDS[tens] + _NUMBER_WORDS[ones]
+        if tens in {"one", "a"} and ones == "hundred":
+            return 100
+    return None
+
+
 def check_answer(expression: str, student_answer: int | str | None) -> CheckResult:
     result = evaluate(expression)
     answer = _coerce_answer(student_answer)
@@ -83,18 +155,7 @@ def check_answer(expression: str, student_answer: int | str | None) -> CheckResu
 
 
 def _coerce_answer(student_answer: int | str | None) -> int | None:
-    if student_answer is None or isinstance(student_answer, bool):
-        return None
-    if isinstance(student_answer, int):
-        return student_answer
-    if isinstance(student_answer, float):
-        return int(student_answer) if student_answer.is_integer() else None
-    if isinstance(student_answer, str):
-        try:
-            return int(student_answer.strip())
-        except ValueError:
-            return None
-    return None
+    return parse_number(student_answer)
 
 
 _OPERATION_LABELS: dict[type, str] = {
@@ -240,12 +301,17 @@ def steps_for(exercise: Exercise | dict) -> list[Step]:
 
 
 def verified_numbers(
-    exercise: Exercise, check: CheckResult | None = None
+    exercise: Exercise,
+    check: CheckResult | None = None,
+    *,
+    include_answer: bool = True,
 ) -> set[int]:
     """Answer, printed operands, and verified step intermediates.
 
     The student's answer is never added, so the tutor cannot repeat a wrong
-    number back to the child.
+    number back to the child. ``include_answer=False`` drops the exercise
+    answer as well, for an exercise the child has not solved yet, even when a
+    step intermediate equals it.
     """
     values = {int(exercise.answer)}
     values.update(int(number) for number in re.findall(r"\d+", exercise.problem))
@@ -259,4 +325,6 @@ def verified_numbers(
             # Never hand a wrong number back to the child, even when it also
             # appears in the printed problem or an intermediate.
             values.discard(int(check.student_answer))
+    if not include_answer:
+        values.discard(int(exercise.answer))
     return values

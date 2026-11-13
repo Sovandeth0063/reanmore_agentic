@@ -210,6 +210,13 @@ class NumberGuardTests(unittest.TestCase):
         self.assertFalse(guard_numbers("The answer is 99", {15}))
         self.assertFalse(guard_numbers("Add 4 and 5", {4}))
 
+    def test_numbers_in_reads_number_words(self) -> None:
+        self.assertEqual(numbers_in("The answer is fifteen and 3."), {15, 3})
+        self.assertEqual(numbers_in("eighty-seven"), {87})
+
+    def test_guard_rejects_a_word_number(self) -> None:
+        self.assertFalse(guard_numbers("The answer is fifteen", {14}))
+
 
 class GuidanceTests(unittest.TestCase):
     @classmethod

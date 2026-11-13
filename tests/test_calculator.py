@@ -109,8 +109,9 @@ class CalculatorTests(unittest.TestCase):
                     self.assertIsInstance(check_answer(expression, answer).error_type, str)
 
     def test_guards_return_unreadable_without_raising(self) -> None:
+        # "five" is a readable number word now; use a word that is not a number.
         cases = (("__import__('os')", "0"), ("1 / 0", "0"), ("1 / 2", "0"), ("4 + 5", None),
-                 ("4 + 5", "five"), ("4 + 5", 1.5))
+                 ("4 + 5", "banana"), ("4 + 5", 1.5))
         for expression, answer in cases:
             with self.subTest(expression=expression, answer=answer):
                 result = check_answer(expression, answer)
@@ -157,6 +158,29 @@ class CalculatorTests(unittest.TestCase):
         exercise = self.lesson.get("A1")
         numbers = verified_numbers(exercise)
         self.assertEqual(numbers, {4, 5, 6, 9, 15})
+
+
+class NumberWordTests(unittest.TestCase):
+    def test_parse_number_accepts_words_and_digits(self) -> None:
+        from agent.calculator import parse_number
+        self.assertEqual(parse_number("nine"), 9)
+        self.assertEqual(parse_number("eighty-seven"), 87)
+        self.assertEqual(parse_number("twenty one"), 21)
+        self.assertEqual(parse_number("one hundred"), 100)
+        self.assertEqual(parse_number("15"), 15)
+        self.assertIsNone(parse_number("banana"))
+
+    def test_check_answer_accepts_a_spoken_number_word(self) -> None:
+        result = check_answer("4 + 5 + 6", "fifteen")
+        self.assertTrue(result.correct)
+        self.assertEqual(result.student_answer, 15)
+
+    def test_verified_numbers_can_exclude_the_unsolved_answer(self) -> None:
+        from agent.lesson import load_lesson
+        lesson = load_lesson("agent/lessons/grade3_demo.yaml")
+        values = verified_numbers(lesson.get("A1"), include_answer=False)
+        self.assertNotIn(15, values)
+        self.assertLessEqual({4, 5, 6, 9}, values)
 
 
 if __name__ == "__main__":

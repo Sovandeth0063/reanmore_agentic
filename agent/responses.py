@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from agent.calculator import CheckResult, steps_for, verified_numbers
+from agent.calculator import CheckResult, parse_number, steps_for, verified_numbers
 from agent.lesson import Exercise
 
 
@@ -12,9 +12,36 @@ class UnknownResponse(KeyError):
     """Raised when a response key is not approved."""
 
 
+_NUMBER_SPAN = re.compile(r"\d+|[a-z]+")
+
+
 def numbers_in(text: str) -> set[int]:
-    """Every integer spoken in ``text``."""
-    return {int(match) for match in re.findall(r"\d+", text)}
+    """Every integer spoken in ``text``, as digits or English number words.
+
+    Number words cover 0-100, including hyphenated and space-separated tens
+    and ones (``eighty-seven``, ``twenty one``) and ``one hundred``. Words
+    that are not numbers are ignored.
+    """
+    tokens = _NUMBER_SPAN.findall(text.lower())
+    values: set[int] = set()
+    index = 0
+    while index < len(tokens):
+        token = tokens[index]
+        if token.isdigit():
+            values.add(int(token))
+            index += 1
+            continue
+        if index + 1 < len(tokens):
+            pair = parse_number(f"{token} {tokens[index + 1]}")
+            if pair is not None:
+                values.add(pair)
+                index += 2
+                continue
+        value = parse_number(token)
+        if value is not None:
+            values.add(value)
+        index += 1
+    return values
 
 
 def guard_numbers(text: str, allowed: set[int]) -> bool:
