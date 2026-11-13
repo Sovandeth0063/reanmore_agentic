@@ -18,6 +18,7 @@ class Step:
     index: int
     prompt: str
     expected_intermediate: int | None
+    hints: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ def load_lesson(path: str | Path) -> Lesson:
                     index=int(step["index"]),
                     prompt=str(step["prompt"]),
                     expected_intermediate=step.get("expected_intermediate"),
+                    hints=tuple(str(hint) for hint in step.get("hints", [])),
                 )
                 for step in item.get("steps", [])
             ),
