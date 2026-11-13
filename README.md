@@ -69,11 +69,11 @@ iPhone and no LiveKit in the active demo.
 | Transport | HTTPS session API (snapshot uploads and short speech turns) |
 | Backend | Python, FastAPI |
 | Speech boundaries | Browser turn detector |
-| Speech-to-text | faster-whisper (local) |
+| Speech-to-text | faster-whisper on CPU (int8) |
 | Intent classification | Hosted Haiku via OpenCode Go; local Ollama fallback (clear commands are deterministic) |
 | Vision | Hosted model by default; local fallback |
 | Arithmetic | Deterministic Python calculator (no LLM math) |
-| Text-to-speech | Browser `SpeechSynthesis` |
+| Text-to-speech | Local VoxPocket TTS service; browser `SpeechSynthesis` fallback |
 | Memory | SQLite, per session |
 | Capture | Laptop webcam preview, one still image per request |
 | Dashboard | Three-pane browser console on the laptop |
@@ -100,32 +100,37 @@ These are not preferences. They define the demo.
 - Session memory only. No profiles, accounts, or cross-session tracking. No raw
   audio or video is stored.
 
-## Repository status (as of 2026-11-12)
+## Repository status (as of 2026-11-13)
 
 Tasks 20-26 moved the demo to the HTTPS snapshot API. Task 32 moves the UI and
-voice to the laptop with a local webcam; Task 27 rehearses the result. Live
-provider and webcam validation remain external integration work.
+voice to the laptop with a local webcam; Task 34 adds the isolated VoxPocket
+TTS service and CPU speech-to-text; Task 35 hardens the numeric vision
+confidence. Live TTS/STT and fake-camera validation passed on 2026-11-13; the
+real external-webcam rehearsal (Task 27) remains.
 
 | Area | State |
 | --- | --- |
 | Demo spec, task cards, task register | Written and current |
 | Architecture docs (`docs/architecture/`) | Updated to the laptop/webcam snapshot path; old rooms are history |
-| `README.md`, `.env.example` | Updated to the laptop/webcam path |
-| `agent/config.py` | Implemented; validates hosted/local vision and optional hosted intent settings, no room transport |
+| `README.md`, `.env.example` | Updated to the laptop/webcam and VoxPocket TTS path |
+| `agent/config.py` | Implemented; validates hosted/local vision, optional hosted intent, and CPU STT device/compute type |
 | `agent/calculator.py`, `lesson.py`, `responses.py`, `tutor.py` | Core implementations: calculator, fixed lesson, response catalog, placement gate, and state machine |
 | `agent/controller.py` | Provider-neutral session controller for the HTTP contract |
 | `agent/vision.py`, `llm.py`, `stt.py`, `memory.py` | Implemented with structured boundaries and SQLite session state |
 | `server/session_api.py`, `server/contract.py` | Session, speech-turn, snapshot, and end routes implemented |
-| `web/index.html`, `web/src/*` | Phone-first camera client exists; Task 32 replaces it with the laptop dashboard and local webcam |
-| `tests/*` | Configuration, contract, session API, controller, calculator, lesson, memory, tutor, STT, vision, and LLM tests written and run locally; provider and webcam validation remain |
+| `scripts/voxpocket_tts_server.py` | Separate VoxPocket TTS service; `voxcpm` is imported lazily |
+| `web/index.html`, `web/src/*` | Laptop dashboard, local webcam, VoxPocket speech with browser fallback |
+| `tests/*` | Configuration, contract, session API, controller, calculator, lesson, memory, tutor, STT, vision, LLM, and TTS-server tests written; provider, TTS, and webcam validation remain |
 
 ## Task plan
 
 Cards 01–26: the original ten-task plan below, plus remediation cards 11–19
 recorded in the same register, plus the snapshot migration cards 20–26.
-Task 32 is the laptop dashboard/webcam enhancement; Task 27 rehearses it.
-Finished cards are filed under `docs/tasks/done/` and the register is
-`docs/tasks/TASK-REPORT.md`. Follow-up cards are 27–32.
+Task 32 is the laptop dashboard/webcam enhancement, Task 33 is hosted intent,
+Task 34 adds VoxPocket TTS plus CPU speech-to-text, and Task 35 fixes numeric
+vision confidence; Task 27 rehearses them. Finished cards are filed under
+`docs/tasks/done/` and the register is `docs/tasks/TASK-REPORT.md`. Follow-up
+cards are 27–35.
 
 The table below records the original plan; the register has the current status.
 
@@ -168,13 +173,16 @@ Project-local OpenCode skills live in `.agent/` and are registered by
    live demo environment on this laptop is Python 3.10; use `py -3.10` for the
    backend and provider scripts.
 
-Start the two services from the repository root:
+Start the three services from the repository root:
 
 ```bash
-# 1. Backend session API
+# 1. Backend session API (CPU speech-to-text)
 py -3.10 -m uvicorn server.session_api:app --host 127.0.0.1 --port 8000
 
-# 2. Browser client
+# 2. VoxPocket TTS, using the isolated environment that has the model stack
+C:\Users\ASUS\voxcpm-tts\Scripts\python.exe scripts\voxpocket_tts_server.py --host 127.0.0.1 --port 8001
+
+# 3. Browser client
 cd web && npm install && npm run dev
 ```
 
@@ -182,8 +190,22 @@ The Vite dev server runs over **HTTPS** with a self-signed development
 certificate (`@vitejs/plugin-basic-ssl`). Open `https://localhost:5173` on the
 laptop, accept the certificate warning once, then grant webcam and microphone
 permission on Start. The dev server proxies `/sessions` to
-`http://127.0.0.1:8000`; no phone or LAN address is needed. Use an external
-1080p webcam on a stand for the demo sheet.
+`http://127.0.0.1:8000` and `/tts` to `http://127.0.0.1:8001`; no phone or LAN
+address is needed. Use an external 1080p webcam on a stand for the demo sheet.
+
+The VoxPocket model is **not** installed in the backend environment and its
+torch CUDA stack is not in `requirements.txt`. The service loads
+`muyleanging/VoxPocket-TTS-Khmer` from `%USERPROFILE%\voxcpm-hf`
+(`C:\Users\ASUS\voxcpm-hf` on this laptop) and serves 44.1 kHz PCM16 WAV. Set
+`VOXPOCKET_CACHE_DIR` to move the cache, or `VOXPOCKET_ALLOW_DOWNLOAD=1` to
+permit a hub download. If the service is down, the dashboard falls back to
+browser `SpeechSynthesis`, so a missing voice never blocks the session.
+
+Speech-to-text runs on the CPU by default (`WHISPER_DEVICE=cpu`,
+`WHISPER_COMPUTE_TYPE=int8`) because faster-whisper's CUDA path fails on this
+laptop without `cublas64_12.dll`; the GPU is reserved for VoxPocket. Change the
+two values only if the CUDA runtime is repaired. There is no automatic GPU
+retry.
 
 Environment variables:
 
@@ -191,6 +213,8 @@ Environment variables:
 OLLAMA_BASE_URL
 OLLAMA_MODEL
 WHISPER_MODEL
+WHISPER_DEVICE         # cpu (demo) or cuda
+WHISPER_COMPUTE_TYPE   # int8 (demo), float16, float32, ...
 VISION_PROVIDER        # hosted (default) or local
 VISION_BASE_URL        # hosted only; base URL before /chat/completions
 VISION_MODEL
@@ -201,6 +225,9 @@ INTENT_BASE_URL        # opencode only; base URL before /chat/completions
 LOG_LEVEL
 DB_URL
 ```
+
+The TTS service reads only `VOXPOCKET_CACHE_DIR` (default
+`%USERPROFILE%\voxcpm-hf`) and `VOXPOCKET_ALLOW_DOWNLOAD`; it needs no API key.
 
 ## Repository layout
 
@@ -220,9 +247,12 @@ agent/                 Python tutor agent
   prompts/tutor.md     persona
 server/session_api.py  session, speech-turn, snapshot, and end routes
 server/contract.py     shared request and response contract
+scripts/               provider checks, turn benchmark, VoxPocket TTS service
+  voxpocket_tts_server.py  separate VoxPocket voice service on port 8001
 web/                   laptop dashboard and browser client
   src/dashboard.ts     three-pane layout and review state (Task 32)
   src/camera.ts        webcam preview and still capture
+  src/speech.ts        VoxPocket speech with browser fallback
   public/worksheet.png fixed question paper for the dashboard
 tests/                 unit and integration tests
 docs/                  spec, task cards, runbook, architecture

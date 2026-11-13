@@ -192,6 +192,55 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.db_url, "sqlite:///:memory:")
 
+    def test_whisper_defaults_to_cpu_int8(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = Settings.from_environment(require_secrets=False)
+
+        self.assertEqual(settings.whisper_model, "small.en")
+        self.assertEqual(settings.whisper_device, "cpu")
+        self.assertEqual(settings.whisper_compute_type, "int8")
+
+    def test_whisper_settings_come_from_the_environment(self) -> None:
+        values = {
+            **SNAPSHOT_ENV,
+            "WHISPER_MODEL": "base.en",
+            "WHISPER_DEVICE": "cuda",
+            "WHISPER_COMPUTE_TYPE": "float16",
+        }
+        with patch.dict(os.environ, values, clear=True):
+            settings = Settings.from_environment()
+
+        self.assertEqual(settings.whisper_model, "base.en")
+        self.assertEqual(settings.whisper_device, "cuda")
+        self.assertEqual(settings.whisper_compute_type, "float16")
+        public = settings.public_dict()
+        self.assertEqual(public["whisper_device"], "cuda")
+        self.assertEqual(public["whisper_compute_type"], "float16")
+
+    def test_invalid_whisper_device_names_variable_not_value(self) -> None:
+        bad_value = "gpu"
+        with patch.dict(
+            os.environ, {**SNAPSHOT_ENV, "WHISPER_DEVICE": bad_value}, clear=True
+        ):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment()
+
+        self.assertIn("WHISPER_DEVICE", str(error.exception))
+        self.assertNotIn(bad_value, str(error.exception))
+
+    def test_invalid_whisper_compute_type_names_variable_not_value(self) -> None:
+        bad_value = "half-ish"
+        with patch.dict(
+            os.environ,
+            {**SNAPSHOT_ENV, "WHISPER_COMPUTE_TYPE": bad_value},
+            clear=True,
+        ):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment()
+
+        self.assertIn("WHISPER_COMPUTE_TYPE", str(error.exception))
+        self.assertNotIn(bad_value, str(error.exception))
+
     def test_missing_vision_names_only_the_required_variables(self) -> None:
         with patch.dict(os.environ, {"OLLAMA_MODEL": "model"}, clear=True):
             with self.assertRaises(ConfigurationError) as error:

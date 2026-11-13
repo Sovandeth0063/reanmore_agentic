@@ -10,4 +10,6 @@ data/
 web/node_modules/
 web/dist/
 .superpowers/
+.venv-tts/
+.cache/
 *.log

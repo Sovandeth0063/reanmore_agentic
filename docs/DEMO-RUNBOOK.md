@@ -2,14 +2,16 @@
 
 ## Start the stack
 
-Run these from the repository root, in two terminals:
+Run these from the repository root, in three terminals:
 
 1. Backend session API: `py -3.10 -m uvicorn server.session_api:app --host 127.0.0.1 --port 8000`
-2. Browser client: `cd web && npm install && npm run dev`
+2. VoxPocket TTS: `C:\Users\ASUS\voxcpm-tts\Scripts\python.exe scripts\voxpocket_tts_server.py --host 127.0.0.1 --port 8001`
+3. Browser client: `cd web && npm install && npm run dev`
 
 The Vite dev server serves HTTPS with a self-signed development certificate and
-proxies `/sessions` to the API on `127.0.0.1:8000`. Stop both terminals with
-Ctrl+C after the demo.
+proxies `/sessions` to the API on `127.0.0.1:8000` and `/tts` to the voice
+service on `127.0.0.1:8001`. Stop all three terminals with Ctrl+C after the
+demo.
 
 ## Laptop webcam and audio
 
@@ -21,7 +23,7 @@ LiveKit, and no network camera.
    printed page and the answer spaces fit inside the framing guide. Use
    autofocus and even lighting; a built-in laptop camera at an angle is the
    fallback, not the target.
-2. Start both services as described above.
+2. Start the services as described above.
 3. On the laptop, open `https://localhost:5173` and accept the self-signed
    certificate once.
 4. Press **Start** and allow **Camera** and **Microphone**.
@@ -43,6 +45,28 @@ LiveKit, and no network camera.
 - **Page slow or frozen:** close other browser tabs and camera apps; the
   full-sheet vision call takes several seconds, so the status should show
   "Checking the sheet" rather than appearing idle.
+
+### The tutor voice
+
+VoxPocket is the primary voice and runs as its own service. It uses the
+isolated environment at `C:\Users\ASUS\voxcpm-tts`; the backend environment has
+no `voxcpm` or torch CUDA packages. The model cache is
+`C:\Users\ASUS\voxcpm-hf` (override with `VOXPOCKET_CACHE_DIR`), it needs no
+API key, and it serves 44.1 kHz PCM16 WAV. The first `/tts` request loads the
+model and is slow, so say one short line before the rehearsal to warm it up.
+`GET http://127.0.0.1:8001/health` reports `loaded`, `sample_rate`, and the
+model id without loading anything; query it with `curl` from a terminal.
+
+- **No tutor voice:** confirm the third terminal is running and the backend is
+  on port 8000. If the TTS service is down or playback fails, the dashboard
+  falls back to browser `SpeechSynthesis` automatically, so the line is still
+  spoken. Do not stop the demo to debug the voice.
+- **Speech stops mid-line:** the dashboard cancels VoxPocket audio when the
+  student starts talking or a new line arrives. That is intended.
+- **Speech-to-text errors:** the backend runs faster-whisper on the CPU
+  (`WHISPER_DEVICE=cpu`, `WHISPER_COMPUTE_TYPE=int8`). Do not switch it to CUDA
+  for the demo: the CUDA build fails on this laptop without
+  `cublas64_12.dll`, and the GPU belongs to VoxPocket.
 
 ### Before a full turn
 
@@ -71,6 +95,10 @@ debug.
   content, the Gemini path sends `inline_data`.
 - Run `python scripts/check_providers.py`; resolve every failed check. Add
   `--live` to send `docs/image.png` to the vision provider.
+- Start the VoxPocket TTS service from `C:\Users\ASUS\voxcpm-tts` and speak one
+  short line to warm the model; `http://127.0.0.1:8001/health` should report
+  `loaded: true` and `sample_rate: 44100`. The backend stays on CPU int8
+  speech-to-text.
 - Print `docs/image.png` clearly on white paper.
 - Use a dark marker and even lighting.
 - Mount the external webcam on a stand so the full sheet and writing area fit
@@ -112,6 +140,9 @@ debug.
   the fixed response catalog and calculator.
 - Vision unavailable: use the spoken-only fallback or the backup recording; the
   tutor never claims to have read the paper.
+- TTS service unavailable or playback fails: the dashboard speaks the tutor line
+  with browser `SpeechSynthesis`; the session continues. Restart the voice
+  service only between turns, and never restart the backend mid-demo.
 - Unclear handwriting: ask the student to repeat or rewrite; never correct it.
 - Reconnect: keep the same session id so the chosen exercise and step resume.
 

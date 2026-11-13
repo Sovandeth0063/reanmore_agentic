@@ -174,7 +174,11 @@ class _Runtime:
                 raise RuntimeError(
                     "Settings are required to build the speech transcriber"
                 )
-            self.transcriber = Transcriber(self.settings.whisper_model)
+            self.transcriber = Transcriber(
+                self.settings.whisper_model,
+                device=self.settings.whisper_device,
+                compute_type=self.settings.whisper_compute_type,
+            )
 
     def _default_controller_factory(self) -> Callable[[str], Any]:
         from agent.controller import TutorController

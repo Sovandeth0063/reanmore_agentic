@@ -63,9 +63,15 @@ class Transcriber:
         model_name: str = "small.en",
         *,
         model_factory: Callable[[], object] | None = None,
+        device: str = "cpu",
+        compute_type: str = "int8",
     ) -> None:
         self.model_name = model_name
         self.model_factory = model_factory
+        # CPU int8 is the demo default: the CUDA run fails on this laptop
+        # without cublas64_12.dll, and the GPU is reserved for VoxPocket.
+        self.device = device
+        self.compute_type = compute_type
         self._model = None
         self._model_lock = threading.Lock()
         self._transcribe_lock = threading.Lock()
@@ -84,7 +90,11 @@ class Transcriber:
                     from faster_whisper import WhisperModel
 
                     self._model = _FloatSamplesAdapter(
-                        WhisperModel(self.model_name)
+                        WhisperModel(
+                            self.model_name,
+                            device=self.device,
+                            compute_type=self.compute_type,
+                        )
                     )
             except STTError:
                 raise

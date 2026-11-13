@@ -1,9 +1,12 @@
 """Tests for PCM decoding, transcription, and confidence."""
 
 import math
+import sys
 import threading
 import time
+import types
 import unittest
+from unittest.mock import patch
 
 from agent.stt import (
     STTError,
@@ -99,6 +102,86 @@ class TranscriberTests(unittest.TestCase):
 
         with self.assertRaises(STTError):
             Transcriber(model_factory=lambda: ExplodingModel()).transcribe([0.0])
+
+
+class WhisperModelLoadTests(unittest.TestCase):
+    """The device and compute type reach faster-whisper, CPU by default."""
+
+    def _transcribe(self, **options):
+        calls: list[tuple[str, dict[str, object]]] = []
+
+        class RecordingModel:
+            def __init__(self, model_name: str, **init_kwargs) -> None:
+                calls.append((model_name, init_kwargs))
+
+            def transcribe(self, samples):
+                return iter([FakeSegment("hi", -0.2)]), None
+
+        module = types.ModuleType("faster_whisper")
+        module.WhisperModel = RecordingModel
+        with patch.dict(sys.modules, {"faster_whisper": module}), patch(
+            "agent.stt._FloatSamplesAdapter", lambda model: model
+        ):
+            transcript = Transcriber("small.en", **options).transcribe([0.0])
+        return transcript, calls
+
+    def test_defaults_load_faster_whisper_on_cpu_int8(self) -> None:
+        transcript, calls = self._transcribe()
+
+        self.assertEqual(transcript.text, "hi")
+        self.assertEqual(
+            calls,
+            [("small.en", {"device": "cpu", "compute_type": "int8"})],
+        )
+
+    def test_explicit_device_and_compute_type_are_forwarded(self) -> None:
+        _, calls = self._transcribe(device="cuda", compute_type="float16")
+
+        self.assertEqual(
+            calls,
+            [("small.en", {"device": "cuda", "compute_type": "float16"})],
+        )
+
+    def test_transcriber_keeps_its_configured_values(self) -> None:
+        transcriber = Transcriber(
+            "base.en", device="cpu", compute_type="int8_float32"
+        )
+
+        self.assertEqual(transcriber.model_name, "base.en")
+        self.assertEqual(transcriber.device, "cpu")
+        self.assertEqual(transcriber.compute_type, "int8_float32")
+
+
+class RuntimeTranscriberSettingsTests(unittest.TestCase):
+    """The session runtime forwards the configured CPU settings."""
+
+    def test_runtime_passes_device_and_compute_type_to_the_transcriber(
+        self,
+    ) -> None:
+        from agent.config import Settings
+        from server.session_api import _Runtime
+
+        captured: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+        class RecordingTranscriber:
+            def __init__(self, *args, **kwargs) -> None:
+                captured.append((args, kwargs))
+
+        runtime = _Runtime(
+            settings=Settings(
+                whisper_device="cpu", whisper_compute_type="int8"
+            )
+        )
+        try:
+            with patch("agent.stt.Transcriber", RecordingTranscriber):
+                runtime._build_shared_providers()
+        finally:
+            runtime.close()
+
+        self.assertEqual(
+            captured,
+            [(("small.en",), {"device": "cpu", "compute_type": "int8"})],
+        )
 
 
 class TranscriberConcurrencyTests(unittest.TestCase):

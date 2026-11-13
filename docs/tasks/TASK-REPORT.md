@@ -9,9 +9,10 @@ the operation types, takes a spoken section/item choice, converses without
 additional images, and captures a new image to check written work. One
 exercise is demonstrated within five minutes. Tasks 20-25 implement this
 target on the HTTPS snapshot path; Task 26 removes the legacy LiveKit runtime.
-Task 32 moves the UI and voice to the laptop with a local webcam, and Task 27
-rehearses that five-minute flow end to end. There is no iPhone or room
-transport in the active demo.
+Task 32 moves the UI and voice to the laptop with a local webcam, Task 34 adds
+the VoxPocket voice and CPU speech-to-text, and Task 27 rehearses that
+five-minute flow end to end. There is no iPhone or room transport in the active
+demo.
 
 | ID | New task | Depends on | Estimate | Status | Main gap |
 | --- | --- | --- | --- | --- | --- |
@@ -29,12 +30,15 @@ transport in the active demo.
 | [31](31-GEMINI-VISION-FEASIBILITY.md) | Check Gemini eligibility and benchmark vision | None for research | 0.75-1.5 days | BLOCKED | Research complete: Go exposes `gemini-4-argon`; live model metadata confirms JPEG/PNG image input, 1M context, 0-day retention. Isolated Gemini adapter, config, checker/runbook notes, and fake-HTTP tests done (2026-11-11; 309 Python tests passed). Remaining: provider answer on non-coding OCR traffic, a Go API key, same-case comparison, and Task 27 laptop check before any switch |
 | [32](32-LAPTOP-DASHBOARD-WEBCAM.md) | Laptop dashboard with local webcam | 21-26, 30 | 1.5-2 days | IN PROGRESS (branch `feature/task-32-laptop-dashboard`, commit `1c7ba68`) | Three-pane laptop dashboard, local webcam, laptop mic/TTS, Start/End, capture-on-request, fixed-sheet highlight, and demo-image browser smoke test complete (2026-11-12); 71 web tests and build pass; file after merge and Task 27 rehearsal |
 | [33](done/33-HAIKU-INTENT.md) | Haiku intent with local fallback | 31 | 0.5-0.75 day | DONE | Hosted `claude-haiku-5-5` via the Go OpenAI route, stable session header, 10 s timeout, shared JSON validation, one-shot local qwen fallback, provider-aware `intent.interpret` logging, checker `--live` intent result, and key reuse from `VISION_API_KEY` (no second key) complete (2026-11-12); 356 Python tests passed; live check `UNCLEAR via opencode` |
+| [34](done/34-VOXPOCKET-TTS-STT-CPU.md) | VoxPocket TTS and CPU STT | 32, 33 | 1-1.5 days | DONE | CPU int8 STT settings and runtime wiring, isolated VoxPocket TTS service (`/tts`, `/health`, 400-character bound, lazy `voxcpm`), VoxPocket speech adapter with browser fallback, and Vite `/tts` proxy implemented; review fix round added factory/log tests and a 20 s watchdog; live TTS 44.1 kHz WAV + `small.en` ASR exact (warm 2.7 s), real STT turn returned the review intent, fake-camera browser smoke reached the worksheet summary, fallback drill spoke via `SpeechSynthesis`; 380 Python tests, 84 web tests, `tsc`, and build pass (2026-11-13) |
+| [35](done/35-VISION-NUMERIC-CONFIDENCE.md) | Numeric vision confidence | — | 0.25 day | DONE | Root cause: Haiku intermittently returned `"confidence": "high"` (2/5 live calls), turning a valid read into the provider-error path; prompt now requires a 0-1 number in worksheet, locator, and handwriting instructions; live 10/10 valid at 2.95-4.07 s, strict parser tests unchanged, Python suite 380 passed (2026-11-13) |
 
-**Suggested order:** Task 32 (laptop dashboard + webcam) first, then Task 27
-(three five-minute laptop rehearsals). Tasks 28-31 are already implemented or
-blocked; do not reopen them for the demo unless the rehearsal proves a gap.
-Task 31 stays optional and does not block the existing hosted provider. Do not
-close Task 27 until the final configuration passes its acceptance criteria.
+**Suggested order:** Tasks 32, 33, 34, and 35 are done; run Task 27 (three
+five-minute laptop rehearsals) next, with the real external webcam and the
+three-service stack. Tasks 28-31 are already implemented or blocked; do not
+reopen them for the demo unless the rehearsal proves a gap. Task 31 stays
+optional and does not block the existing hosted provider. Do not close Task 27
+until the final configuration passes its acceptance criteria.
 The old task rows below record the previous LiveKit/phone design. Their `DONE`
 labels do not mean the laptop/webcam flow is complete. The old seven-day
 schedule and "only deferred-manual work remains" statement are historical and
@@ -59,8 +63,9 @@ Current baseline (2026-11-12):
   `npm run build` clean.
 - Hosted vision is live on `claude-haiku-5-5` via the OpenCode Go
   OpenAI-compatible route; local `gemma4:e4b` is the no-key fallback.
-- The remaining demo gap is Task 32 (laptop dashboard + local webcam), then
-  Task 27 (three laptop rehearsals).
+- The remaining demo gap is Task 32 (laptop dashboard + local webcam) plus
+  Task 34 (VoxPocket voice + CPU STT) verification, then Task 27 (three laptop
+  rehearsals).
 
 ## Purpose
 

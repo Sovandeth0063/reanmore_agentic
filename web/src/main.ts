@@ -3,6 +3,7 @@ import { createSessionClient } from "./client.ts";
 import { createRecorder } from "./recorder.ts";
 import { createTutorSession } from "./session.ts";
 import type { TutorSpeech } from "./session.ts";
+import { createVoxPocketSpeech } from "./speech.ts";
 import { createTutorDashboard } from "./ui.ts";
 
 const ui = createTutorDashboard();
@@ -10,7 +11,13 @@ const client = createSessionClient({
   fetch: (input, init) => window.fetch(input, init),
 });
 const camera = createCamera({ video: ui.videoElement });
-const speech = createBrowserSpeech();
+const speech = createVoxPocketSpeech({
+  fetchImpl: (input, init) => window.fetch(input, init),
+  audioFactory: (src) => new Audio(src),
+  createObjectUrl: (blob) => URL.createObjectURL(blob),
+  revokeObjectUrl: (url) => URL.revokeObjectURL(url),
+  browserFallback: createBrowserSpeech(),
+});
 
 let deliverUtterance: (pcm: ArrayBuffer) => void = () => undefined;
 let deliverSpeechStart: () => void = () => undefined;

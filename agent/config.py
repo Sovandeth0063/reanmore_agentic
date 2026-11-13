@@ -9,6 +9,21 @@ from urllib.parse import urlparse
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_INTENT_PROVIDER = "ollama"
 INTENT_PROVIDERS = {"ollama", "opencode"}
+# The demo keeps speech-to-text on the CPU: faster-whisper's CUDA build fails
+# on this laptop without cublas64_12.dll, and the GPU is reserved for VoxPocket.
+DEFAULT_WHISPER_DEVICE = "cpu"
+DEFAULT_WHISPER_COMPUTE_TYPE = "int8"
+WHISPER_DEVICES = {"cpu", "cuda"}
+WHISPER_COMPUTE_TYPES = {
+    "auto",
+    "default",
+    "int8",
+    "int8_float16",
+    "int8_float32",
+    "float16",
+    "float32",
+    "bfloat16",
+}
 # Never expose these through repr() or public_dict(); they are credentials.
 PRIVATE_SETTING_FIELDS = ("vision_api_key", "intent_api_key")
 
@@ -22,6 +37,8 @@ class Settings:
     ollama_base_url: str = DEFAULT_OLLAMA_BASE_URL
     ollama_model: str = ""
     whisper_model: str = "small.en"
+    whisper_device: str = DEFAULT_WHISPER_DEVICE
+    whisper_compute_type: str = DEFAULT_WHISPER_COMPUTE_TYPE
     vision_provider: str = "hosted"
     vision_api: str = "openai"
     vision_base_url: str = ""
@@ -50,6 +67,12 @@ class Settings:
             "ollama_base_url": os.getenv("OLLAMA_BASE_URL", DEFAULT_OLLAMA_BASE_URL),
             "ollama_model": os.getenv("OLLAMA_MODEL", ""),
             "whisper_model": os.getenv("WHISPER_MODEL", "small.en"),
+            "whisper_device": os.getenv(
+                "WHISPER_DEVICE", DEFAULT_WHISPER_DEVICE
+            ).lower(),
+            "whisper_compute_type": os.getenv(
+                "WHISPER_COMPUTE_TYPE", DEFAULT_WHISPER_COMPUTE_TYPE
+            ).lower(),
             "vision_provider": os.getenv("VISION_PROVIDER", "hosted").lower(),
             "vision_api": os.getenv("VISION_API", "openai").lower(),
             "vision_base_url": os.getenv("VISION_BASE_URL", ""),
@@ -73,6 +96,17 @@ class Settings:
         if intent_provider not in INTENT_PROVIDERS:
             raise ConfigurationError(
                 "INTENT_PROVIDER must be either ollama or opencode"
+            )
+
+        # A typo must fail at startup, not in the middle of a speech turn.
+        if values["whisper_device"] not in WHISPER_DEVICES:
+            raise ConfigurationError(
+                "WHISPER_DEVICE must be either cpu or cuda"
+            )
+        if values["whisper_compute_type"] not in WHISPER_COMPUTE_TYPES:
+            raise ConfigurationError(
+                "WHISPER_COMPUTE_TYPE must be one of "
+                + ", ".join(sorted(WHISPER_COMPUTE_TYPES))
             )
 
         provider = values["vision_provider"]
