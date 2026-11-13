@@ -9,6 +9,12 @@ from urllib.parse import urlparse
 DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434"
 DEFAULT_INTENT_PROVIDER = "ollama"
 INTENT_PROVIDERS = {"ollama", "opencode"}
+# Safe defaults keep the deterministic choice flow and offline wording; the
+# demo `.env` opts into guided flow and hosted rendering explicitly.
+DEFAULT_TUTOR_FLOW = "choice"
+DEFAULT_TUTOR_RENDERER = "template"
+TUTOR_FLOWS = {"choice", "guided"}
+TUTOR_RENDERERS = {"template", "llm"}
 # The demo keeps speech-to-text on the CPU: faster-whisper's CUDA build fails
 # on this laptop without cublas64_12.dll, and the GPU is reserved for VoxPocket.
 DEFAULT_WHISPER_DEVICE = "cpu"
@@ -52,6 +58,8 @@ class Settings:
     intent_api_key: str = field(default="", repr=False)
     log_level: str = "INFO"
     db_url: str = "sqlite:///./data/tutor.db"
+    tutor_flow: str = DEFAULT_TUTOR_FLOW
+    tutor_renderer: str = DEFAULT_TUTOR_RENDERER
 
     def public_dict(self) -> dict[str, str]:
         """Return loggable settings without credentials."""
@@ -86,6 +94,10 @@ class Settings:
             "intent_api_key": os.getenv("INTENT_API_KEY", ""),
             "log_level": os.getenv("LOG_LEVEL", "INFO"),
             "db_url": os.getenv("DB_URL", "sqlite:///./data/tutor.db"),
+            "tutor_flow": os.getenv("TUTOR_FLOW", DEFAULT_TUTOR_FLOW).lower(),
+            "tutor_renderer": os.getenv(
+                "TUTOR_RENDERER", DEFAULT_TUTOR_RENDERER
+            ).lower(),
         }
 
         # One Go key is enough: an empty INTENT_API_KEY reuses VISION_API_KEY.
@@ -107,6 +119,16 @@ class Settings:
             raise ConfigurationError(
                 "WHISPER_COMPUTE_TYPE must be one of "
                 + ", ".join(sorted(WHISPER_COMPUTE_TYPES))
+            )
+
+        # A typo in either tutor switch must fail at startup, never mid-turn.
+        if values["tutor_flow"] not in TUTOR_FLOWS:
+            raise ConfigurationError(
+                "TUTOR_FLOW must be either choice or guided"
+            )
+        if values["tutor_renderer"] not in TUTOR_RENDERERS:
+            raise ConfigurationError(
+                "TUTOR_RENDERER must be either template or llm"
             )
 
         provider = values["vision_provider"]

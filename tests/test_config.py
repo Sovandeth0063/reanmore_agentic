@@ -422,5 +422,54 @@ class IntentSettingsTests(unittest.TestCase):
         self.assertNotIn("intent-key-value", rendered)
 
 
+class TutorSettingsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        dotenv = patch("agent.config._load_dotenv")
+        dotenv.start()
+        self.addCleanup(dotenv.stop)
+
+    def test_tutor_defaults_keep_existing_behavior(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = Settings.from_environment(require_secrets=False)
+
+        self.assertEqual(settings.tutor_flow, "choice")
+        self.assertEqual(settings.tutor_renderer, "template")
+
+    def test_guided_flow_and_llm_renderer_come_from_the_environment(self) -> None:
+        values = {"TUTOR_FLOW": "guided", "TUTOR_RENDERER": "llm"}
+        with patch.dict(os.environ, values, clear=True):
+            settings = Settings.from_environment(require_secrets=False)
+
+        self.assertEqual(settings.tutor_flow, "guided")
+        self.assertEqual(settings.tutor_renderer, "llm")
+
+    def test_invalid_tutor_flow_fails_fast(self) -> None:
+        bad_value = "magic"
+        with patch.dict(os.environ, {"TUTOR_FLOW": bad_value}, clear=False):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment(require_secrets=False)
+
+        self.assertIn("TUTOR_FLOW", str(error.exception))
+        self.assertNotIn(bad_value, str(error.exception))
+
+    def test_invalid_tutor_renderer_names_variable_not_value(self) -> None:
+        bad_value = "haiku"
+        with patch.dict(
+            os.environ, {"TUTOR_RENDERER": bad_value}, clear=False
+        ):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment(require_secrets=False)
+
+        self.assertIn("TUTOR_RENDERER", str(error.exception))
+        self.assertNotIn(bad_value, str(error.exception))
+
+    def test_tutor_settings_appear_in_the_public_dict(self) -> None:
+        settings = Settings(tutor_flow="guided", tutor_renderer="llm")
+
+        public = settings.public_dict()
+        self.assertEqual(public["tutor_flow"], "guided")
+        self.assertEqual(public["tutor_renderer"], "llm")
+
+
 if __name__ == "__main__":
     unittest.main()
