@@ -133,6 +133,11 @@ Tasks 32 and 33.
 - Task review returned CHANGES REQUESTED for the missing engine-factory and
   log-redaction tests plus an optional watchdog; all three were implemented in
   the review fix round and re-verified.
+- The final whole-branch review found one fail-safe hole: a throwing
+  `createObjectUrl`/`audioFactory` after `settled` was set could leave the UI
+  silent and the recorder gated. The catch now falls back whenever the line is
+  not done, with a test for the throwing factory; the reviewer confirmed
+  APPROVE. Final web suite: 85 tests.
 
 ## Controller Rulings (2026-11-13, review fix round)
 

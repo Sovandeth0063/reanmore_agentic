@@ -94,6 +94,7 @@ interface HarnessOptions {
   playResult?: () => Promise<void>;
   noFallback?: boolean;
   timeoutMs?: number;
+  audioFactoryError?: Error;
 }
 
 function createHarness(
@@ -117,6 +118,9 @@ function createHarness(
       return respond(input, init);
     },
     audioFactory: (src) => {
+      if (options.audioFactoryError) {
+        throw options.audioFactoryError;
+      }
       const audio = new FakeAudio(src, playResult);
       audios.push(audio);
       events.push("audio");
@@ -264,6 +268,28 @@ test("a playback failure falls back and revokes the object URL", async () => {
   await flush();
   await flush();
 
+  assert.equal(harness.fallback.spoken.length, 1);
+  assert.deepEqual(harness.revoked, ["blob:tutor-line"]);
+  assert.equal(ends, 0);
+
+  harness.fallback.spoken[0].handlers?.onEnd?.();
+  assert.equal(ends, 1);
+});
+
+test("an audio factory failure falls back and ends exactly once", async () => {
+  const harness = createHarness(async () => wavResponse(wavBlob()), {
+    audioFactoryError: new Error("no audio element"),
+  });
+  let ends = 0;
+  harness.speech.speak("Hello.", {
+    onEnd: () => {
+      ends += 1;
+    },
+  });
+  await flush();
+
+  assert.equal(harness.created.length, 1);
+  assert.equal(harness.audios.length, 0);
   assert.equal(harness.fallback.spoken.length, 1);
   assert.deepEqual(harness.revoked, ["blob:tutor-line"]);
   assert.equal(ends, 0);

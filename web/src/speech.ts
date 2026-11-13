@@ -177,9 +177,10 @@ export function createVoxPocketSpeech(
         });
       }
     } catch {
-      // An abort is handled by cancel(); any other failure falls back so the
-      // student still hears the tutor's line.
-      if (!line.done && !line.settled) {
+      // An abort is handled by cancel(); any other failure -- including a
+      // throwing URL or audio factory after the request settled -- falls back
+      // so the student still hears the line and the recorder is released.
+      if (!line.done) {
         fallback(line);
       }
     }
