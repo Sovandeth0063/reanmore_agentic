@@ -174,7 +174,11 @@ class _Runtime:
                 raise RuntimeError(
                     "Settings are required to build the speech transcriber"
                 )
-            self.transcriber = Transcriber(self.settings.whisper_model)
+            self.transcriber = Transcriber(
+                self.settings.whisper_model,
+                device=self.settings.whisper_device,
+                compute_type=self.settings.whisper_compute_type,
+            )
 
     def _default_controller_factory(self) -> Callable[[str], Any]:
         from agent.controller import TutorController
@@ -190,11 +194,13 @@ class _Runtime:
             raise RuntimeError("Runtime is missing its shared providers")
 
         def factory(session_id: str) -> TutorController:
-            from agent.llm import OllamaClient
+            from agent.llm import build_intent_client
             from agent.vision import VisionClient
 
             # Every controller borrows the same client and transcriber. The
-            # runtime owns their lifecycle, so no close hook is passed.
+            # runtime owns their lifecycle, so no close hook is passed. The
+            # intent client is selected per settings and carries this session
+            # id so the hosted route gets a stable attribution header.
             return TutorController(
                 session_id,
                 lesson=lesson,
@@ -202,7 +208,9 @@ class _Runtime:
                 vision=VisionClient(
                     settings, http=http, session_id=session_id
                 ),
-                intent=OllamaClient(settings, http=http),
+                intent=build_intent_client(
+                    settings, http=http, session_id=session_id
+                ),
                 transcriber=transcriber,
             )
 

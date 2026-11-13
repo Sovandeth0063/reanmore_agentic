@@ -9,6 +9,7 @@ import httpx
 
 from agent.config import Settings
 from agent.vision import (
+    LOCATE_INSTRUCTION,
     PLACEMENT_DIFFERENT_SHEET,
     PLACEMENT_MISSING,
     PLACEMENT_PARTIAL,
@@ -33,6 +34,9 @@ GEMINI_ENDPOINT = (
 )
 PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"png-body"
 JPEG_BYTES = b"\xff\xd8\xff\xe0" + b"jpeg-body"
+# Task 35: without an explicit type the hosted model sometimes answered
+# "confidence": "high". Every read instruction must spell out the requirement.
+NUMERIC_CONFIDENCE_REQUIREMENT = "confidence must be a number from 0 to 1"
 
 
 class FakeResponse:
@@ -542,6 +546,15 @@ class WorksheetPlacementParseTests(unittest.TestCase):
             instruction,
         )
 
+    def test_instruction_requires_a_numeric_confidence(self) -> None:
+        _, http = self._parse({"items": [], "confidence": 0.9})
+        content = http.calls[0]["json"]["messages"][0]["content"][0]["text"]
+        instruction = json.loads(content)["instruction"]
+
+        self.assertIn(NUMERIC_CONFIDENCE_REQUIREMENT, instruction)
+        self.assertIn("for example 0.9", instruction)
+        self.assertIn("never a word", instruction)
+
     def test_item_expression_drops_trailing_equals_and_answer_blank(
         self,
     ) -> None:
@@ -697,6 +710,26 @@ class HandwritingReadTests(unittest.TestCase):
             "clear, blank, obscured, overwritten, multiple_answer, wrong_item",
             instruction,
         )
+
+    def test_instruction_requires_a_numeric_confidence(self) -> None:
+        _, http = self._read(
+            {
+                "raw_text": "87",
+                "value": "87",
+                "confidence": 0.97,
+                "visible_work": "",
+            }
+        )
+        content = http.calls[0]["json"]["messages"][0]["content"][0]["text"]
+        instruction = json.loads(content)["instruction"]
+
+        self.assertIn(NUMERIC_CONFIDENCE_REQUIREMENT, instruction)
+        self.assertIn("for example 0.9", instruction)
+        self.assertIn("never a word", instruction)
+
+    def test_locator_instruction_uses_the_same_numeric_confidence(self) -> None:
+        self.assertIn(NUMERIC_CONFIDENCE_REQUIREMENT, LOCATE_INSTRUCTION)
+        self.assertIn("never a word", LOCATE_INSTRUCTION)
 
     def test_invalid_handwriting_confidence_still_raises(self) -> None:
         for body in (

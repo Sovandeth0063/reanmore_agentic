@@ -368,7 +368,7 @@ class FastPathTests(ConversationTestCase):
         )
 
         self.assertEqual(len(self.intent.calls), calls + 1)
-        self.assertIn("ollama.interpret", self.tool_names())
+        self.assertIn("intent.interpret", self.tool_names())
         self.assertEqual(response.status, STATUS_LISTENING)
         self.assertIsNone(response.capture_request)
 
@@ -400,7 +400,7 @@ class FastPathTests(ConversationTestCase):
         # Before placement the id is not a clear choice: it reaches the model
         # and the placement gate answers, exactly as before the fast path.
         self.assertEqual(len(self.intent.calls), calls + 1)
-        self.assertEqual(self.tool_names()[rows:], ["ollama.interpret"])
+        self.assertEqual(self.tool_names()[rows:], ["intent.interpret"])
 
     def test_check_my_writing_with_a_spoken_number_still_needs_an_image(
         self,

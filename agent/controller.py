@@ -182,10 +182,10 @@ class TutorController:
         ):
             return self._response(select_response("unclear"), STATUS_LISTENING)
         state = self._require_state()
-        # Unambiguous commands skip the model round trip; every other
-        # utterance still reaches Ollama. The gates below are unchanged, so a
-        # fast-path hit can neither choose before placement nor grade a spoken
-        # number as handwriting.
+        # Unambiguous commands skip both classifiers; every other utterance
+        # reaches the configured intent client. The gates below are unchanged,
+        # so a fast-path hit can neither choose before placement nor grade a
+        # spoken number as handwriting.
         started = perf_counter()
         clear = parse_clear_intent(
             transcript.text,
@@ -211,9 +211,16 @@ class TutorController:
                 exercise,
             )
         except _PROVIDER_ERRORS as error:
-            self._record_tool("ollama.interpret", started, error)
+            self._record_tool("intent.interpret", started, error)
             return self._service_response(STATUS_LISTENING)
-        self._record_tool("ollama.interpret", started)
+        # One row per intent classification, naming the provider that actually
+        # served it; never the prompt, transcript, or key. A fallback reports
+        # "ollama".
+        self._record_tool(
+            "intent.interpret",
+            started,
+            details=getattr(self.intent, "provider", "ollama"),
+        )
         return self._apply_intent(intent, transcript.text)
 
     def handle_snapshot(
@@ -601,12 +608,16 @@ class TutorController:
         )
 
     def _record_tool(
-        self, name: str, started: float, error: Exception | None = None
+        self,
+        name: str,
+        started: float,
+        error: Exception | None = None,
+        details: str = "",
     ) -> None:
         self.store.append_tool_call(
             self.session_id,
             name,
-            details="" if error is None else type(error).__name__,
+            details=type(error).__name__ if error is not None else details,
             duration_ms=(perf_counter() - started) * 1000,
             success=error is None,
         )

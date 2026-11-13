@@ -107,8 +107,8 @@ LOCATE_INSTRUCTION = (
     "answer area; it is used to confirm which item the answer belongs to, not "
     "to bound the later crop. corners are the sheet's outer corners as four "
     "[x, y] points in top-left, top-right, bottom-right, bottom-left order, "
-    "normalized to the full photo. confidence is 0-1. reason is a short "
-    "explanation."
+    "normalized to the full photo. confidence must be a number from 0 to 1, "
+    "for example 0.9, never a word. reason is a short explanation."
 )
 
 
@@ -130,9 +130,11 @@ class VisionClient:
             "Return JSON with placement, reason, items "
             "[{item: \"A1\"..\"B6\", section: \"A\" or \"B\", problem: the "
             "printed expression, expression: the bare arithmetic expression "
-            "without \"=\" or the answer blank}], and confidence. placement "
-            "must be exactly one of ready, missing, partial, unreadable, "
-            "different_sheet; do not describe the sheet's position.",
+            "without \"=\" or the answer blank}], and confidence. confidence "
+            "must be a number from 0 to 1, for example 0.9, never a word. "
+            "placement must be exactly one of ready, missing, partial, "
+            "unreadable, different_sheet; do not describe the sheet's "
+            "position.",
         )
         if not isinstance(payload, dict):
             raise VisionError("Vision returned an invalid response")
@@ -191,8 +193,9 @@ class VisionClient:
             image_bytes,
             "Read only the answer area for the given item. Return JSON with "
             "raw_text, value, confidence, visible_work, visibility, location, "
-            "and reasons. visibility must be exactly one of clear, blank, "
-            "obscured, overwritten, multiple_answer, wrong_item.",
+            "and reasons. confidence must be a number from 0 to 1, for "
+            "example 0.9, never a word. visibility must be exactly one of "
+            "clear, blank, obscured, overwritten, multiple_answer, wrong_item.",
             exercise,
         )
         if not isinstance(payload, dict):

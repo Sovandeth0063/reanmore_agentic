@@ -1,4 +1,5 @@
 import { statusText, showsLooking } from "./status.ts";
+import type { CameraState } from "./status.ts";
 import type { SessionClient, SessionError } from "./client.ts";
 import type { TutorCamera } from "./camera.ts";
 import type { TutorRecorder } from "./recorder.ts";
@@ -20,12 +21,23 @@ export interface TutorSpeech {
   cancel(): void;
 }
 
+/** A captured JPEG for the dashboard's "Last capture" thumbnail. */
+export interface LastCapture {
+  readonly image: Blob;
+  readonly capturedAt: Date;
+}
+
 export interface TutorSessionUi {
   setStatus(text: string): void;
   setLooking(looking: boolean): void;
   setStartEnabled(enabled: boolean): void;
   showStart(): void;
   hideStart(): void;
+  setTutorText(text: string): void;
+  setExercise(exerciseId: string | null): void;
+  addReviewMessage(text: string): void;
+  setCameraState(state: CameraState): void;
+  setLastCapture(capture: LastCapture): void;
 }
 
 export interface TutorSessionDeps {
@@ -136,7 +148,9 @@ export class TutorSession {
       this.stopPromise = null;
     }
     this.stopped = false;
+    this.ui.setCameraState("starting");
 
+    let cameraFailed = false;
     try {
       const created = await this.client.createSession();
       this.sessionId = created.session_id;
@@ -144,7 +158,12 @@ export class TutorSession {
         await this.cleanupFailedStart();
         return;
       }
-      await this.camera.start();
+      try {
+        await this.camera.start();
+      } catch (error) {
+        cameraFailed = true;
+        throw error;
+      }
       if (this.stopped) {
         await this.cleanupFailedStart();
         return;
@@ -155,10 +174,14 @@ export class TutorSession {
         return;
       }
       this.started = true;
+      this.ui.setCameraState("ready");
       this.ui.hideStart();
       this.applyResponse(created);
     } catch (error) {
       await this.cleanupFailedStart();
+      // A camera failure is a permission/hardware problem, not "off": keep
+      // the header honest so the adult knows to check the browser prompt.
+      this.ui.setCameraState(cameraFailed ? "blocked" : "off");
       throw error;
     }
   }
@@ -173,6 +196,7 @@ export class TutorSession {
     }
     if (result.kind === "not-ready") {
       this.ui.setLooking(false);
+      this.ui.setCameraState("blocked");
       this.ui.setStatus(CAMERA_NOT_READY_STATUS);
       return;
     }
@@ -182,6 +206,11 @@ export class TutorSession {
       return;
     }
 
+    this.ui.setCameraState("ready");
+    this.ui.setLastCapture({
+      image: result.image,
+      capturedAt: new Date(),
+    });
     const response = await this.client.sendSnapshot(
       result.image,
       purpose,
@@ -201,7 +230,12 @@ export class TutorSession {
     }
     this.ui.setStatus(statusText(response.status));
     this.ui.setLooking(showsLooking(response.status));
+    if (response.exercise_id) {
+      this.ui.setExercise(response.exercise_id);
+    }
     if (response.tutor_text) {
+      this.ui.setTutorText(response.tutor_text);
+      this.ui.addReviewMessage(response.tutor_text);
       this.speak(response.tutor_text);
     }
   }
@@ -238,6 +272,7 @@ export class TutorSession {
     this.pending = false;
     this.cancelSpeech();
     this.ui.setLooking(false);
+    this.ui.setCameraState("off");
     this.camera.stop();
 
     const recorderStopped = this.recorder.stop().catch(() => undefined);
@@ -260,6 +295,7 @@ export class TutorSession {
     this.pending = false;
     this.ui.setLooking(false);
     this.camera.stop();
+    this.ui.setCameraState("off");
     await this.recorder.stop().catch(() => undefined);
     if (this.sessionId) {
       this.sessionId = null;

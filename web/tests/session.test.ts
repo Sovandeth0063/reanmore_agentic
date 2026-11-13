@@ -5,10 +5,12 @@ import type { SessionClient } from "../src/client.ts";
 import type { CameraCapture, TutorCamera } from "../src/camera.ts";
 import type { TutorRecorder } from "../src/recorder.ts";
 import type {
+  LastCapture,
   SpeechHandlers,
   TutorSessionUi,
   TutorSpeech,
 } from "../src/session.ts";
+import type { CameraState } from "../src/status.ts";
 import {
   CAMERA_NOT_READY_STATUS,
   IMAGE_TOO_LARGE_STATUS,
@@ -187,6 +189,11 @@ class FakeUi implements TutorSessionUi {
   readonly statuses: string[] = [];
   readonly looking: boolean[] = [];
   readonly startEnabled: boolean[] = [];
+  readonly tutorTexts: string[] = [];
+  readonly exercises: Array<string | null> = [];
+  readonly reviewMessages: string[] = [];
+  readonly cameraStates: CameraState[] = [];
+  readonly captures: LastCapture[] = [];
   shown = 0;
   hidden = 0;
 
@@ -208,6 +215,26 @@ class FakeUi implements TutorSessionUi {
 
   hideStart(): void {
     this.hidden += 1;
+  }
+
+  setTutorText(text: string): void {
+    this.tutorTexts.push(text);
+  }
+
+  setExercise(exerciseId: string | null): void {
+    this.exercises.push(exerciseId);
+  }
+
+  addReviewMessage(text: string): void {
+    this.reviewMessages.push(text);
+  }
+
+  setCameraState(state: CameraState): void {
+    this.cameraStates.push(state);
+  }
+
+  setLastCapture(capture: LastCapture): void {
+    this.captures.push(capture);
   }
 }
 
@@ -234,6 +261,11 @@ async function startHarness() {
   harness.speech.cancels = 0;
   harness.ui.statuses.length = 0;
   harness.ui.looking.length = 0;
+  harness.ui.tutorTexts.length = 0;
+  harness.ui.exercises.length = 0;
+  harness.ui.reviewMessages.length = 0;
+  harness.ui.cameraStates.length = 0;
+  harness.ui.captures.length = 0;
   return harness;
 }
 
@@ -563,3 +595,90 @@ test("a failed device start cleans up and re-enables Start", async () => {
   assert.equal(harness.client.endRequests.length, 1);
   assert.equal(harness.camera.stopCalls, 1);
 });
+
+test("the camera reports starting, ready, and off around the session", async () => {
+  const harness = makeHarness();
+
+  await harness.session.start();
+  assert.deepEqual(harness.ui.cameraStates, ["starting", "ready"]);
+
+  await harness.session.stop();
+  assert.equal(harness.ui.cameraStates[harness.ui.cameraStates.length - 1], "off");
+});
+
+test("a denied camera is reported as blocked, not off", async () => {
+  const harness = makeHarness();
+  harness.camera.startFailure = new DOMException(
+    "Permission denied",
+    "NotAllowedError",
+  );
+
+  await assert.rejects(() => harness.session.start());
+
+  assert.equal(
+    harness.ui.cameraStates[harness.ui.cameraStates.length - 1],
+    "blocked",
+  );
+  assert.equal(harness.ui.shown, 1);
+});
+
+test("responses update tutor text, review log, exercise, and last capture", async () => {
+  const harness = await startHarness();
+  harness.client.turns.push(
+    makeResponse({
+      tutor_text: "Let me check A2.",
+      status: "reading_work",
+      capture_request: "check",
+      exercise_id: "A2",
+    }),
+  );
+  harness.client.snapshots.push(
+    makeResponse({
+      tutor_text: "That is right!",
+      status: "speaking",
+      exercise_id: "A2",
+    }),
+  );
+
+  await harness.session.handleUtterance(utterance());
+
+  assert.deepEqual(harness.ui.exercises, ["A2", "A2"]);
+  assert.deepEqual(harness.ui.reviewMessages, [
+    "Let me check A2.",
+    "That is right!",
+  ]);
+  assert.equal(harness.ui.tutorTexts[harness.ui.tutorTexts.length - 1], "That is right!");
+  assert.equal(harness.ui.captures.length, 1);
+  assert.ok(harness.ui.captures[0]?.image.size > 0);
+  assert.ok(harness.ui.captures[0]?.capturedAt instanceof Date);
+});
+
+test("a not-ready capture records no last capture and blocks the camera", async () => {
+  const harness = await startHarness();
+  harness.camera.result = { kind: "not-ready" };
+  harness.client.turns.push(
+    makeResponse({ status: "checking_sheet", capture_request: "review" }),
+  );
+
+  await harness.session.handleUtterance(utterance());
+
+  assert.equal(harness.ui.captures.length, 0);
+  assert.equal(
+    harness.ui.cameraStates[harness.ui.cameraStates.length - 1],
+    "blocked",
+  );
+});
+
+test("a response without an exercise leaves the previous selection alone", async () => {
+  const harness = await startHarness();
+  harness.client.turns.push(
+    makeResponse({ tutor_text: "Let's do B2.", status: "speaking", exercise_id: "B2" }),
+    makeResponse({ tutor_text: "First multiply.", status: "speaking" }),
+  );
+
+  await harness.session.handleUtterance(utterance());
+  await harness.session.handleUtterance(utterance());
+
+  assert.deepEqual(harness.ui.exercises, ["B2"]);
+});
+

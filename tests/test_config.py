@@ -192,6 +192,55 @@ class SettingsTests(unittest.TestCase):
 
         self.assertEqual(settings.db_url, "sqlite:///:memory:")
 
+    def test_whisper_defaults_to_cpu_int8(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = Settings.from_environment(require_secrets=False)
+
+        self.assertEqual(settings.whisper_model, "small.en")
+        self.assertEqual(settings.whisper_device, "cpu")
+        self.assertEqual(settings.whisper_compute_type, "int8")
+
+    def test_whisper_settings_come_from_the_environment(self) -> None:
+        values = {
+            **SNAPSHOT_ENV,
+            "WHISPER_MODEL": "base.en",
+            "WHISPER_DEVICE": "cuda",
+            "WHISPER_COMPUTE_TYPE": "float16",
+        }
+        with patch.dict(os.environ, values, clear=True):
+            settings = Settings.from_environment()
+
+        self.assertEqual(settings.whisper_model, "base.en")
+        self.assertEqual(settings.whisper_device, "cuda")
+        self.assertEqual(settings.whisper_compute_type, "float16")
+        public = settings.public_dict()
+        self.assertEqual(public["whisper_device"], "cuda")
+        self.assertEqual(public["whisper_compute_type"], "float16")
+
+    def test_invalid_whisper_device_names_variable_not_value(self) -> None:
+        bad_value = "gpu"
+        with patch.dict(
+            os.environ, {**SNAPSHOT_ENV, "WHISPER_DEVICE": bad_value}, clear=True
+        ):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment()
+
+        self.assertIn("WHISPER_DEVICE", str(error.exception))
+        self.assertNotIn(bad_value, str(error.exception))
+
+    def test_invalid_whisper_compute_type_names_variable_not_value(self) -> None:
+        bad_value = "half-ish"
+        with patch.dict(
+            os.environ,
+            {**SNAPSHOT_ENV, "WHISPER_COMPUTE_TYPE": bad_value},
+            clear=True,
+        ):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment()
+
+        self.assertIn("WHISPER_COMPUTE_TYPE", str(error.exception))
+        self.assertNotIn(bad_value, str(error.exception))
+
     def test_missing_vision_names_only_the_required_variables(self) -> None:
         with patch.dict(os.environ, {"OLLAMA_MODEL": "model"}, clear=True):
             with self.assertRaises(ConfigurationError) as error:
@@ -240,6 +289,137 @@ class SettingsTests(unittest.TestCase):
         settings = Settings(vision_api_key="vision-key-value")
 
         self.assertNotIn("vision-key-value", repr(settings))
+
+
+INTENT_ENV = {
+    "INTENT_PROVIDER": "opencode",
+    "INTENT_MODEL": "claude-haiku-5-5",
+    "INTENT_BASE_URL": "https://opencode.ai/inference/go/openai/v1",
+}
+
+
+class IntentSettingsTests(unittest.TestCase):
+    def setUp(self) -> None:
+        dotenv = patch("agent.config._load_dotenv")
+        dotenv.start()
+        self.addCleanup(dotenv.stop)
+
+    def test_intent_defaults_to_local_ollama(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            settings = Settings.from_environment(require_secrets=False)
+
+        self.assertEqual(settings.intent_provider, "ollama")
+        self.assertEqual(settings.intent_model, "")
+        self.assertEqual(settings.intent_base_url, "")
+        self.assertEqual(settings.intent_api_key, "")
+
+    def test_opencode_intent_reuses_the_vision_key(self) -> None:
+        with patch.dict(
+            os.environ, {**SNAPSHOT_ENV, **INTENT_ENV}, clear=True
+        ):
+            settings = Settings.from_environment()
+
+        self.assertEqual(settings.intent_provider, "opencode")
+        self.assertEqual(settings.intent_model, "claude-haiku-5-5")
+        self.assertEqual(
+            settings.intent_base_url,
+            "https://opencode.ai/inference/go/openai/v1",
+        )
+        self.assertEqual(settings.intent_api_key, "vision-key")
+
+    def test_intent_key_overrides_the_vision_key(self) -> None:
+        with patch.dict(
+            os.environ,
+            {**SNAPSHOT_ENV, **INTENT_ENV, "INTENT_API_KEY": "intent-key"},
+            clear=True,
+        ):
+            settings = Settings.from_environment()
+
+        self.assertEqual(settings.intent_api_key, "intent-key")
+
+    def test_invalid_intent_provider_names_variable_not_value(self) -> None:
+        bad_value = "bogus-provider"
+        with patch.dict(
+            os.environ,
+            {**SNAPSHOT_ENV, "INTENT_PROVIDER": bad_value},
+            clear=True,
+        ):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment()
+
+        self.assertIn("INTENT_PROVIDER", str(error.exception))
+        self.assertNotIn(bad_value, str(error.exception))
+
+    def test_opencode_intent_requires_model_and_base_url(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                **SNAPSHOT_ENV,
+                "INTENT_PROVIDER": "opencode",
+            },
+            clear=True,
+        ):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment()
+
+        message = str(error.exception)
+        self.assertIn("INTENT_MODEL", message)
+        self.assertIn("INTENT_BASE_URL", message)
+
+    def test_invalid_intent_base_url_names_variable_not_value(self) -> None:
+        bad_value = "not-a-url"
+        with patch.dict(
+            os.environ,
+            {**SNAPSHOT_ENV, **INTENT_ENV, "INTENT_BASE_URL": bad_value},
+            clear=True,
+        ):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment()
+
+        self.assertIn("INTENT_BASE_URL", str(error.exception))
+        self.assertNotIn(bad_value, str(error.exception))
+
+    def test_opencode_intent_without_any_key_names_intent_variable(self) -> None:
+        values = {
+            "OLLAMA_MODEL": "model",
+            "VISION_PROVIDER": "local",
+            "VISION_MODEL": "local-model",
+            **INTENT_ENV,
+        }
+        with patch.dict(os.environ, values, clear=True):
+            with self.assertRaises(ConfigurationError) as error:
+                Settings.from_environment()
+
+        self.assertIn("INTENT_API_KEY", str(error.exception))
+
+    def test_local_intent_ignores_hosted_intent_values(self) -> None:
+        values = {
+            **SNAPSHOT_ENV,
+            "INTENT_PROVIDER": "ollama",
+            "INTENT_BASE_URL": "not-a-url",
+            "INTENT_MODEL": "",
+        }
+        with patch.dict(os.environ, values, clear=True):
+            settings = Settings.from_environment()
+
+        self.assertEqual(settings.intent_provider, "ollama")
+        self.assertEqual(settings.intent_base_url, "not-a-url")
+
+    def test_public_dict_and_repr_omit_the_intent_key(self) -> None:
+        settings = Settings(
+            ollama_model="model",
+            intent_provider="opencode",
+            intent_model="claude-haiku-5-5",
+            intent_base_url="https://opencode.ai/inference/go/openai/v1",
+            intent_api_key="intent-key-value",
+        )
+
+        public = settings.public_dict()
+        self.assertEqual(public["intent_provider"], "opencode")
+        self.assertEqual(public["intent_model"], "claude-haiku-5-5")
+        self.assertNotIn("intent_api_key", public)
+        rendered = repr(public) + repr(settings)
+        self.assertNotIn("intent-key-value", rendered)
 
 
 if __name__ == "__main__":
