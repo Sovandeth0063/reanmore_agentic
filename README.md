@@ -280,6 +280,8 @@ docs/                  spec, task cards, runbook, architecture
 - Task cards: `docs/tasks/` (migration cards 20–32; finished cards in
   `docs/tasks/done/`)
 - Five-minute runbook: `docs/DEMO-RUNBOOK.md`
+- End-to-end pipeline and measured latency:
+  `docs/architecture/04-End-to-End-Pipeline.md`
 - Laptop dashboard design:
   `docs/superpowers/specs/2026-11-12-laptop-dashboard-webcam-design.md`
 - Product and architecture context: `docs/architecture/`
