@@ -237,10 +237,8 @@ class SpeechFlowTests(ConversationTestCase):
         self.assertEqual(spoken.status, STATUS_SPEAKING)
         self.assertIsNone(spoken.capture_request)
         self.assertEqual(spoken.exercise_id, "A2")
-        self.assertTrue(
-            spoken.tutor_text.startswith(
-                select_response("spoken_only_fallback") + " "
-            )
+        self.assertNotIn(
+            select_response("spoken_only_fallback"), spoken.tutor_text
         )
         self.assertIn("correct", spoken.tutor_text.lower())
         self.assertEqual(self.vision.parse_calls, parse_calls)
@@ -526,10 +524,8 @@ class AliasTests(ConversationTestCase):
         )
         self.assertEqual(spoken.status, STATUS_SPEAKING)
         self.assertIsNone(spoken.capture_request)
-        self.assertTrue(
-            spoken.tutor_text.startswith(
-                select_response("spoken_only_fallback") + " "
-            )
+        self.assertNotIn(
+            select_response("spoken_only_fallback"), spoken.tutor_text
         )
         self.assertIn("correct", spoken.tutor_text.lower())
 
@@ -582,6 +578,20 @@ class PromptTests(unittest.TestCase):
         self.assertIn("never state an unverified number", text.lower())
         self.assertIn("return json only", text.lower())
 
+    def test_prompt_treats_a_bare_number_while_working_as_a_spoken_answer(
+        self,
+    ) -> None:
+        text = " ".join(PROMPT_PATH.read_text(encoding="utf-8").split())
+
+        self.assertIn(
+            "When an exercise is active and the student says only a number, "
+            "treat it as a spoken answer",
+            text,
+        )
+        self.assertIn("CHECK_SPOKEN_ANSWER", text)
+        self.assertIn("candidate_answer", text)
+        self.assertIn("only when the student is choosing an exercise", text)
+
 
 class ReconnectTests(ConversationTestCase):
     def test_correct_answer_advances_the_step_for_a_rebuilt_controller(self) -> None:
@@ -593,10 +603,8 @@ class ReconnectTests(ConversationTestCase):
             "is 15 right",
             TutorIntent("CHECK_SPOKEN_ANSWER", None, "15", None),
         )
-        self.assertTrue(
-            first.tutor_text.startswith(
-                select_response("spoken_only_fallback") + " "
-            )
+        self.assertNotIn(
+            select_response("spoken_only_fallback"), first.tutor_text
         )
         self.assertIn("correct", first.tutor_text.lower())
         self.assertEqual(self.store.get(SESSION_ID).current_step, 2)

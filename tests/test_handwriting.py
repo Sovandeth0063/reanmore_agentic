@@ -540,17 +540,15 @@ class ControllerCheckTests(unittest.TestCase):
         self.assertEqual(spoken.status, STATUS_SPEAKING)
         self.assertIsNone(spoken.capture_request)
         self.assertEqual(spoken.exercise_id, "A2")
-        self.assertTrue(
-            spoken.tutor_text.startswith(
-                select_response("spoken_only_fallback") + " "
-            )
+        self.assertNotIn(
+            select_response("spoken_only_fallback"), spoken.tutor_text
         )
         self.assertIn("correct", spoken.tutor_text.lower())
         self.assertNotIn("read from", spoken.tutor_text.lower())
         self.assertEqual(self.store.get(SESSION_ID).attempts, 1)
         self.assertEqual(self.vision.read_calls, 1)
 
-    def test_genuine_spoken_check_prefixes_the_fallback(self) -> None:
+    def test_genuine_spoken_check_has_no_disclaimer(self) -> None:
         self.intent.intent = TutorIntent(
             "CHECK_SPOKEN_ANSWER", None, "87", None
         )
@@ -559,12 +557,116 @@ class ControllerCheckTests(unittest.TestCase):
             Transcript("is 87 right", 0.95)
         )
 
-        fallback = select_response("spoken_only_fallback")
-        self.assertTrue(response.tutor_text.startswith(fallback + " "))
+        self.assertNotIn(
+            select_response("spoken_only_fallback"), response.tutor_text
+        )
         self.assertEqual(response.status, STATUS_SPEAKING)
         self.assertIsNone(response.capture_request)
         self.assertEqual(self.vision.read_calls, 0)
         self.assertIn("calculator.check_answer", self.check_tool_rows())
+
+
+class GuidedHandwritingCheckTests(unittest.TestCase):
+    """A graded handwritten answer follows the same turn as a spoken one."""
+
+    def setUp(self) -> None:
+        self.store = SessionStore("sqlite:///:memory:")
+        self.lesson = load_lesson(LESSON_PATH)
+        self.vision = FakeVision(valid_sheet(self.lesson))
+        self.intent = FakeIntent()
+        self.controller = TutorController(
+            SESSION_ID,
+            lesson=self.lesson,
+            store=self.store,
+            vision=self.vision,
+            intent=self.intent,
+            transcriber=FakeTranscriber(),
+            flow_mode="guided",
+        )
+        reviewed = self.controller.handle_snapshot(
+            JPEG_BYTES, "image/jpeg", "review"
+        )
+        self.assertEqual(reviewed.exercise_id, "A1")
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def check_snapshot(self, exercise_id: str = "A1"):
+        return self.controller.handle_snapshot(
+            JPEG_BYTES, "image/jpeg", "check", exercise_id
+        )
+
+    def test_guided_correct_handwriting_auto_advances_to_a2(self) -> None:
+        self.vision.reading = HandwritingRead("15", "15", 0.99, "4 + 5 + 6")
+
+        response = self.check_snapshot("A1")
+
+        self.assertEqual(response.status, STATUS_SPEAKING)
+        self.assertIsNone(response.capture_request)
+        self.assertEqual(response.exercise_id, "A2")
+        self.assertIn("A2", response.tutor_text)
+        self.assertIn("63 + 24", response.tutor_text)
+        self.assertNotIn(
+            select_response("stay_on_exercise"), response.tutor_text
+        )
+        state = self.store.get(SESSION_ID)
+        self.assertEqual(state.chosen_exercise, "A2")
+        self.assertEqual(self.controller.tutor.state, TutorState.STUDENT_WORKING)
+
+    def test_guided_wrong_handwriting_stays_on_a1_and_hints(self) -> None:
+        self.vision.reading = HandwritingRead("7", "7", 0.99, "4 + 5")
+
+        response = self.check_snapshot("A1")
+
+        self.assertEqual(response.status, STATUS_SPEAKING)
+        self.assertEqual(response.exercise_id, "A1")
+        self.assertIn(
+            self.lesson.get("A1").steps[0].hints[0], response.tutor_text
+        )
+        state = self.store.get(SESSION_ID)
+        self.assertEqual(state.chosen_exercise, "A1")
+        self.assertEqual(state.attempts, 1)
+        self.assertEqual(self.controller.tutor.state, TutorState.STUDENT_WORKING)
+
+
+class ChoiceHandwritingCheckTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.store = SessionStore("sqlite:///:memory:")
+        self.lesson = load_lesson(LESSON_PATH)
+        self.vision = FakeVision(valid_sheet(self.lesson))
+        self.intent = FakeIntent()
+        self.controller = TutorController(
+            SESSION_ID,
+            lesson=self.lesson,
+            store=self.store,
+            vision=self.vision,
+            intent=self.intent,
+            transcriber=FakeTranscriber(),
+            flow_mode="choice",
+        )
+        self.controller.handle_snapshot(JPEG_BYTES, "image/jpeg", "review")
+        self.intent.intent = TutorIntent(
+            "CHOOSE_EXERCISE", "A1", None, None
+        )
+        chosen = self.controller.handle_transcript(Transcript("A1", 0.95))
+        self.assertEqual(chosen.exercise_id, "A1")
+
+    def tearDown(self) -> None:
+        self.store.close()
+
+    def test_choice_mode_correct_handwriting_keeps_praise(self) -> None:
+        self.vision.reading = HandwritingRead("15", "15", 0.99, "4 + 5 + 6")
+
+        response = self.controller.handle_snapshot(
+            JPEG_BYTES, "image/jpeg", "check", "A1"
+        )
+
+        self.assertEqual(response.status, STATUS_SPEAKING)
+        self.assertEqual(response.exercise_id, "A1")
+        self.assertIn("correct", response.tutor_text.lower())
+        self.assertNotIn("Next is", response.tutor_text)
+        self.assertEqual(self.store.get(SESSION_ID).chosen_exercise, "A1")
+        self.assertEqual(self.controller.tutor.state, TutorState.PRAISE)
 
 
 if __name__ == "__main__":

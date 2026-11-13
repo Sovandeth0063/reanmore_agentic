@@ -27,6 +27,7 @@ from agent.llm import (
     TutorIntent,
 )
 from agent.memory import SessionStore
+from agent.render import HostedRenderer, RenderResult, TemplateRenderer
 from agent.responses import placement_prompt, select_response
 from agent.sheet_layout import load_layout
 from agent.stt import STTError, Transcript
@@ -115,6 +116,18 @@ class FakeIntent:
         return self.intent
 
 
+class RecordingRenderer:
+    """A renderer that keeps the template line and records each request."""
+
+    def __init__(self) -> None:
+        self.requests = []
+        self.provider = "recording"
+
+    def render(self, request):
+        self.requests.append(request)
+        return RenderResult(request.template_text, self.provider, False)
+
+
 class FakeVision:
     def __init__(self, lesson) -> None:
         self.worksheet = valid_parse(lesson)
@@ -180,6 +193,7 @@ class SessionApiTestCase(unittest.TestCase):
             vision=self.vision,
             intent=self.intent,
             transcriber=self.transcriber,
+            flow_mode="choice",
         )
 
     def _build_app(self):
@@ -493,10 +507,9 @@ class PlacementTests(SessionApiTestCase):
         self.assertEqual(checked.status_code, 200)
         self.assertEqual(checked.json()["status"], "speaking")
         self.assertEqual(checked.json()["exercise_id"], "A1")
-        self.assertTrue(
-            checked.json()["tutor_text"].startswith(
-                select_response("spoken_only_fallback") + " "
-            )
+        self.assertNotIn(
+            select_response("spoken_only_fallback"),
+            checked.json()["tutor_text"],
         )
         self.assertIn("correct", checked.json()["tutor_text"].lower())
 
@@ -654,7 +667,7 @@ class CheckGuardTests(SessionApiTestCase):
         self.assertIn("correct", retried.json()["tutor_text"].lower())
         self.assertEqual(self.store.get(session_id).attempts, 1)
 
-    def test_spoken_check_after_failed_snapshot_is_prefixed(self) -> None:
+    def test_spoken_check_after_failed_snapshot_omits_the_disclaimer(self) -> None:
         session_id = self.create_session()
         self.place_worksheet(session_id)
         self.choose(session_id, "A1")
@@ -668,10 +681,9 @@ class CheckGuardTests(SessionApiTestCase):
 
         self.assertEqual(spoken.json()["status"], "speaking")
         self.assertIsNone(spoken.json()["capture_request"])
-        self.assertTrue(
-            spoken.json()["tutor_text"].startswith(
-                select_response("spoken_only_fallback") + " "
-            )
+        self.assertNotIn(
+            select_response("spoken_only_fallback"),
+            spoken.json()["tutor_text"],
         )
         self.assertIn("correct", spoken.json()["tutor_text"].lower())
 
@@ -746,6 +758,96 @@ class FastPathTests(SessionApiTestCase):
             self.tool_names(session_id)[rows:],
             ["stt.transcribe", "intent.interpret"],
         )
+
+
+class GuidedSessionTests(SessionApiTestCase):
+    """The guided flow through the same snapshot HTTP contract."""
+
+    def setUp(self) -> None:
+        self.renderer = RecordingRenderer()
+        super().setUp()
+
+    def _factory(self, session_id):
+        return TutorController(
+            session_id,
+            lesson=self.lesson,
+            store=self.store,
+            vision=self.vision,
+            intent=self.intent,
+            transcriber=self.transcriber,
+            flow_mode="guided",
+            renderer=self.renderer,
+        )
+
+    def review_guided(self, session_id):
+        self.set_turn(
+            "review my worksheet", TutorIntent("REVIEW", None, None, None)
+        )
+        asking = self.turn(session_id)
+        self.assertEqual(asking.json()["capture_request"], "review")
+        return self.snapshot(session_id, "review")
+
+    def test_guided_review_presents_a1_and_auto_advances(self) -> None:
+        session_id = self.create_session()
+
+        reviewed = self.review_guided(session_id)
+
+        self.assertEqual(reviewed.status_code, 200)
+        payload = reviewed.json()
+        self.assertEqual(payload["status"], "speaking")
+        self.assertEqual(payload["exercise_id"], "A1")
+        self.assertIn("A1", payload["tutor_text"])
+        self.assertIsNone(payload["capture_request"])
+
+        self.set_turn(
+            "fifteen", TutorIntent("CHECK_SPOKEN_ANSWER", None, "15", None)
+        )
+        checked = self.turn(session_id)
+
+        payload = checked.json()
+        self.assertEqual(payload["status"], "speaking")
+        self.assertEqual(payload["exercise_id"], "A2")
+        self.assertIn("A2", payload["tutor_text"])
+        self.assertIn("63 + 24", payload["tutor_text"])
+        self.assertEqual(self.store.get(session_id).chosen_exercise, "A2")
+
+        request = self.renderer.requests[-1]
+        self.assertEqual(request.mode, "praise")
+        # The earned answer and the next exercise's printed numbers are
+        # allowed; the next unsolved answer is not.
+        self.assertIn(15, request.allowed_numbers)
+        self.assertIn(63, request.allowed_numbers)
+        self.assertIn(24, request.allowed_numbers)
+        self.assertNotIn(87, request.allowed_numbers)
+
+        row = self.store.connection.execute(
+            "SELECT details, success FROM tool_calls "
+            "WHERE session_id = ? AND name = 'tutor.render' "
+            "ORDER BY id DESC LIMIT 1",
+            (session_id,),
+        ).fetchone()
+        self.assertEqual(row["details"], "recording")
+        self.assertEqual(row["success"], 1)
+
+    def test_guided_mid_exercise_choice_is_a_speaking_line(self) -> None:
+        session_id = self.create_session()
+        self.review_guided(session_id)
+
+        self.set_turn(
+            "let's do B2",
+            TutorIntent("CHOOSE_EXERCISE", "B2", None, None),
+        )
+        response = self.turn(session_id)
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["status"], "speaking")
+        self.assertEqual(payload["exercise_id"], "A1")
+        self.assertEqual(
+            payload["tutor_text"], select_response("stay_on_exercise")
+        )
+        self.assertIsNone(payload["capture_request"])
+        self.assertEqual(self.store.get(session_id).chosen_exercise, "A1")
 
 
 class IntentToolLogTests(SessionApiTestCase):
@@ -1222,6 +1324,7 @@ class TurnIsolationTests(unittest.TestCase):
                 vision=vision,
                 intent=intent,
                 transcriber=transcriber,
+                flow_mode="choice",
             )
 
         app = create_app(
@@ -1306,6 +1409,97 @@ class SharedRuntimeTests(unittest.TestCase):
         self.assertIs(first.intent.http, runtime.http)
         self.assertIs(second.vision.http, runtime.http)
         self.assertIs(second.intent.http, runtime.http)
+
+    def test_runtime_wires_guided_flow_and_template_renderer(self) -> None:
+        _, controller = self._default_controller(
+            Settings(tutor_flow="guided", tutor_renderer="template")
+        )
+
+        self.assertEqual(controller.flow_mode, "guided")
+        self.assertIsInstance(controller.renderer, TemplateRenderer)
+
+    def test_default_settings_keep_the_choice_flow_and_template_renderer(
+        self,
+    ) -> None:
+        _, controller = self._default_controller(Settings())
+
+        self.assertEqual(controller.flow_mode, "choice")
+        self.assertIsInstance(controller.renderer, TemplateRenderer)
+
+    def test_runtime_wires_the_hosted_renderer_to_the_shared_client(
+        self,
+    ) -> None:
+        settings = Settings(
+            tutor_flow="guided",
+            tutor_renderer="llm",
+            intent_model="claude-haiku-5-5",
+            intent_base_url="https://opencode.ai/inference/go/openai/v1",
+            intent_api_key="go-key",
+        )
+
+        runtime, controller = self._default_controller(settings)
+
+        self.assertIsInstance(controller.renderer, HostedRenderer)
+        self.assertIs(controller.renderer.http, runtime.http)
+        # The renderer carries the tutoring session id so the hosted route
+        # gets the same stable attribution header as the intent client.
+        self.assertEqual(controller.renderer.session_id, "intent-session")
+
+    def test_each_controller_gets_a_renderer_for_its_session(self) -> None:
+        class FakeClient:
+            def __init__(self, *args, **kwargs) -> None:
+                self.closed = 0
+
+            def close(self) -> None:
+                self.closed += 1
+
+        settings = Settings(
+            tutor_renderer="llm",
+            intent_model="claude-haiku-5-5",
+            intent_base_url="https://opencode.ai/inference/go/openai/v1",
+            intent_api_key="go-key",
+        )
+
+        with patch("httpx.Client", FakeClient):
+            app = create_app(
+                settings=settings, store=self.store, lesson=self.lesson
+            )
+            runtime = app.state.runtime
+            runtime.ensure()
+            first = runtime.controller_factory("session-one")
+            second = runtime.controller_factory("session-two")
+
+        self.assertIsNot(first.renderer, second.renderer)
+        self.assertEqual(first.renderer.session_id, "session-one")
+        self.assertEqual(second.renderer.session_id, "session-two")
+        # Both renderers still borrow the one process-wide client.
+        self.assertIs(first.renderer.http, runtime.http)
+        self.assertIs(second.renderer.http, runtime.http)
+
+    def test_injected_factory_builds_no_renderer_and_no_shared_client(
+        self,
+    ) -> None:
+        class FakeController:
+            flow_mode = "choice"
+            renderer = None
+
+        def factory(session_id):
+            return FakeController()
+
+        with patch("agent.render.build_renderer") as build:
+            app = create_app(
+                settings=Settings(tutor_flow="guided", tutor_renderer="llm"),
+                store=self.store,
+                lesson=self.lesson,
+                controller_factory=factory,
+            )
+            runtime = app.state.runtime
+            runtime.ensure()
+            controller = runtime.controller_factory("session-one")
+
+        build.assert_not_called()
+        self.assertIsNone(runtime.http)
+        self.assertIsInstance(controller, FakeController)
 
     def _default_controller(self, settings):
         class FakeClient:

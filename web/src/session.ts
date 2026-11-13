@@ -10,6 +10,9 @@ export const CAMERA_NOT_READY_STATUS =
   "The camera is not ready. Please try again.";
 export const IMAGE_TOO_LARGE_STATUS =
   "The picture is too large. Please try again.";
+export const DEFAULT_IDLE_PROMPT_MS = 8000;
+export const DEFAULT_IDLE_PROMPT =
+  "Take your time. When you are ready, tell me your answer.";
 
 export interface SpeechHandlers {
   onStart?: () => void;
@@ -20,6 +23,21 @@ export interface TutorSpeech {
   speak(text: string, handlers?: SpeechHandlers): void;
   cancel(): void;
 }
+
+/** Injectable timers so idle-prompt tests never touch the real clock. */
+export interface TutorTimers {
+  setTimeout(callback: () => void, ms: number): unknown;
+  clearTimeout(id: unknown): void;
+}
+
+const browserTimers: TutorTimers = {
+  setTimeout(callback, ms) {
+    return globalThis.setTimeout(callback, ms);
+  },
+  clearTimeout(id) {
+    globalThis.clearTimeout(id as ReturnType<typeof globalThis.setTimeout>);
+  },
+};
 
 /** A captured JPEG for the dashboard's "Last capture" thumbnail. */
 export interface LastCapture {
@@ -46,6 +64,9 @@ export interface TutorSessionDeps {
   recorder: TutorRecorder;
   speech: TutorSpeech;
   ui: TutorSessionUi;
+  timers?: TutorTimers;
+  idlePromptMs?: number;
+  idlePrompt?: string;
 }
 
 export interface StopOptions {
@@ -66,6 +87,9 @@ export class TutorSession {
   private readonly recorder: TutorRecorder;
   private readonly speech: TutorSpeech;
   private readonly ui: TutorSessionUi;
+  private readonly timers: TutorTimers;
+  private readonly idlePromptMs: number;
+  private readonly idlePrompt: string;
 
   private sessionId: string | null = null;
   private started = false;
@@ -73,6 +97,10 @@ export class TutorSession {
   private pending = false;
   private startPromise: Promise<void> | null = null;
   private stopPromise: Promise<void> | null = null;
+  private idleTimer: unknown = null;
+  private idlePrompted = false;
+  /** Invalidates handler callbacks from speech that has since been cancelled. */
+  private speechEpoch = 0;
 
   constructor(deps: TutorSessionDeps) {
     this.client = deps.client;
@@ -80,6 +108,9 @@ export class TutorSession {
     this.recorder = deps.recorder;
     this.speech = deps.speech;
     this.ui = deps.ui;
+    this.timers = deps.timers ?? browserTimers;
+    this.idlePromptMs = deps.idlePromptMs ?? DEFAULT_IDLE_PROMPT_MS;
+    this.idlePrompt = deps.idlePrompt ?? DEFAULT_IDLE_PROMPT;
   }
 
   start(): Promise<void> {
@@ -115,6 +146,8 @@ export class TutorSession {
       return;
     }
 
+    // A real utterance starts a new turn, so it earns a fresh idle window.
+    this.idlePrompted = false;
     this.pending = true;
     try {
       const audio = new Blob([pcm], { type: "audio/l16" });
@@ -148,6 +181,8 @@ export class TutorSession {
       this.stopPromise = null;
     }
     this.stopped = false;
+    this.idlePrompted = false;
+    this.clearIdleTimer();
     this.ui.setCameraState("starting");
 
     let cameraFailed = false;
@@ -240,21 +275,68 @@ export class TutorSession {
     }
   }
 
-  private speak(text: string): void {
+  private speak(text: string, armIdlePrompt = true): void {
     this.cancelSpeech();
+    const epoch = this.speechEpoch;
     this.speech.speak(text, {
       onStart: () => {
+        if (epoch !== this.speechEpoch) {
+          return;
+        }
         this.recorder.setSpeechActive(true);
       },
       onEnd: () => {
+        if (epoch !== this.speechEpoch) {
+          return;
+        }
         this.recorder.setSpeechActive(false);
+        if (armIdlePrompt) {
+          this.armIdlePrompt();
+        }
       },
     });
   }
 
   private cancelSpeech(): void {
+    this.speechEpoch += 1;
     this.speech.cancel();
+    this.clearIdleTimer();
     this.recorder.setSpeechActive(false);
+  }
+
+  /**
+   * Wait out one silent stretch after the tutor stops talking, then offer a
+   * single gentle prompt. It never repeats for the same turn: the prompt's own
+   * ``onEnd`` passes ``armIdlePrompt = false``, and a new turn resets the flag.
+   */
+  private armIdlePrompt(): void {
+    this.clearIdleTimer();
+    if (!this.canIdlePrompt()) {
+      return;
+    }
+    this.idleTimer = this.timers.setTimeout(() => {
+      this.idleTimer = null;
+      if (!this.canIdlePrompt()) {
+        return;
+      }
+      this.idlePrompted = true;
+      this.speak(this.idlePrompt, false);
+    }, this.idlePromptMs);
+  }
+
+  private clearIdleTimer(): void {
+    if (this.idleTimer === null) {
+      return;
+    }
+    this.timers.clearTimeout(this.idleTimer);
+    this.idleTimer = null;
+  }
+
+  private canIdlePrompt(): boolean {
+    return this.started
+      && !this.stopped
+      && !this.pending
+      && !this.idlePrompted;
   }
 
   private handleFailure(error: unknown): void {
@@ -270,6 +352,7 @@ export class TutorSession {
     this.stopped = true;
     this.started = false;
     this.pending = false;
+    this.idlePrompted = false;
     this.cancelSpeech();
     this.ui.setLooking(false);
     this.ui.setCameraState("off");
@@ -293,6 +376,8 @@ export class TutorSession {
   private async cleanupFailedStart(): Promise<void> {
     this.started = false;
     this.pending = false;
+    this.idlePrompted = false;
+    this.clearIdleTimer();
     this.ui.setLooking(false);
     this.camera.stop();
     this.ui.setCameraState("off");

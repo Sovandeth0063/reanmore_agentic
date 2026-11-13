@@ -9,8 +9,8 @@ camera**.
 
 The original concept diagram showed a phone camera feeding a laptop backend.
 The demo no longer uses a phone. The laptop browser owns the webcam, the
-microphone, the dashboard, and the speaker; the backend and the voice service
-run as local processes on the same machine.
+microphone, the dashboard, and the speaker; the backend runs as a local process
+on the same machine, and the optional VoxPocket voice service runs beside it.
 
 ```text
                               STUDENT
@@ -61,6 +61,9 @@ run as local processes on the same machine.
                 STUDENT
 ```
 
+The VoxPocket process is optional. The demo default speaks with the browser's
+`SpeechSynthesis`; only a `VITE_TTS=voxpocket` build calls the service.
+
 ### Differences from the old diagram
 
 | Old diagram | Actual demo |
@@ -69,7 +72,7 @@ run as local processes on the same machine.
 | Phone sends images to the laptop | Browser sends the JPEG over the same-origin HTTPS API |
 | "Image processing: OCR + vision" is a local stage | One hosted vision call returns strict JSON (worksheet or handwriting) |
 | "Exercise understanding" is open-ended | Fixed 12-item lesson (`docs/image.png`); deterministic placement and answer rules |
-| Browser `SpeechSynthesis` speaks | Local VoxPocket service returns a WAV; browser voice is only the fallback |
+| Browser `SpeechSynthesis` speaks | Browser `SpeechSynthesis` is the demo default; the optional VoxPocket service returns a WAV for a `VITE_TTS=voxpocket` build |
 | Laptop audio only | Laptop microphone, camera, speaker, and dashboard |
 
 ### Services
@@ -78,7 +81,7 @@ run as local processes on the same machine.
 | --- | --- | --- |
 | Vite dev server | `https://localhost:5173` | HTTPS page, dashboard, same-origin proxy |
 | Backend API | `http://127.0.0.1:8000` | Sessions, STT, intent, vision, tutor state |
-| VoxPocket TTS | `http://127.0.0.1:8001` | Local 44.1 kHz voice; lazy model load |
+| VoxPocket TTS (optional) | `http://127.0.0.1:8001` | Local 44.1 kHz voice; only used by the opt-in build |
 | Ollama (optional fallback) | `http://localhost:11434` | Local intent/guidance fallback when configured |
 
 The Vite proxy avoids mixed content: the page is HTTPS, while both local
@@ -137,6 +140,11 @@ sequenceDiagram
     B->>B: stop camera, microphone, and audio
 ```
 
+The `POST /tts` hops belong to the optional VoxPocket build
+(`VITE_TTS=voxpocket`). The default build speaks every `tutor_text` locally with
+the browser's `SpeechSynthesis` and makes no `/tts` request, so the greeting,
+turn, and snapshot replies reach the student without a TTS service round trip.
+
 ### HTTP contract
 
 | Endpoint | Body | Result |
@@ -152,10 +160,12 @@ Statuses used by the UI: `ready`, `listening`, `checking_sheet`,
 ## 3. Measured latency
 
 Measured on 2026-11-13 on the demo laptop (RTX 4050, Python 3.10, Chrome,
-hosted Haiku through the OpenCode Go route). "Warm" means the STT model and
-the VoxPocket model were already loaded; "cold" means the first request after
-a process start. Stage durations come from the backend `tool_calls` table; the
-browser start figure comes from Playwright smoke runs.
+hosted Haiku through the OpenCode Go route). The TTS figures below are from the
+optional VoxPocket path; the default browser voice makes no TTS request.
+"Warm" means the STT model and the VoxPocket model were already loaded; "cold"
+means the first request after a process start. Stage durations come from the
+backend `tool_calls` table; the browser start figure comes from Playwright smoke
+runs.
 
 ### Per-phase
 
@@ -206,22 +216,23 @@ audible pause before the summary is about **1-1.5 s**, not a full extra 3 s.
 ### Where the time goes
 
 1. **Vision**, about 3.2 s, only on capture turns.
-2. **VoxPocket TTS**, about 2.3 s per line, because the whole WAV is generated
-   before playback.
+2. **VoxPocket TTS**, about 2.3 s per line in the optional build, because the
+   whole WAV is generated before playback. The default browser voice has no
+   service or generation wait; its start follows the browser's own voice engine.
 3. **STT + intent**, about 2.2 s combined.
 4. **700 ms** detector silence is intentional, not processing delay.
 
 ### Cold-start rules
 
-- Start the backend and the TTS service before the rehearsal.
-- Send one short line through the TTS service so the VoxPocket model loads
-  (**17-20 s**) before the student presses Start. A first cold request has
-  been observed at **53.8 s**.
+- Start the backend before the rehearsal.
+- Only for the opt-in VoxPocket build: start the TTS service and send one short
+  line through it so the VoxPocket model loads (**17-20 s**) before the student
+  presses Start. A first cold request has been observed at **53.8 s**.
 - The first backend turn after a fresh process pays about **2.7 s** extra for
   the STT model. The first worksheet snapshot has no such model load.
-- The 20 s browser TTS watchdog will hand a line to the browser voice if
-  VoxPocket exceeds the budget, so a forgotten warm-up changes the voice
-  mid-demo instead of freezing the UI.
+- In `voxpocket` mode the 20 s browser TTS watchdog hands a line to the browser
+  voice if VoxPocket exceeds the budget, so a forgotten warm-up changes the
+  voice mid-demo instead of freezing the UI.
 
 ## 4. Failure and fallback behavior
 
@@ -232,7 +243,7 @@ audible pause before the summary is about **1-1.5 s**, not a full extra 3 s.
 | STT fails | `service_error` style response; the UI stays in `listening` |
 | Vision fails or times out | `adjust_sheet` plus `capture_request`; the student retakes the sheet |
 | Worksheet is not readable / not the right sheet | Specific placement prompt; no exercise advance |
-| VoxPocket is down or slow | Browser `SpeechSynthesis` speaks the same text; a 20 s watchdog triggers the fallback |
+| VoxPocket is down or slow (opt-in build) | Browser `SpeechSynthesis` speaks the same text; a 20 s watchdog triggers the fallback |
 | Camera or microphone denied | Start error identifies permission/hardware and restores Start |
 | Browser tab closes | Session is ended with a keepalive request; camera and mic stop on `pagehide` |
 
@@ -245,14 +256,19 @@ audible pause before the summary is about **1-1.5 s**, not a full extra 3 s.
 - SQLite stores session state, tutor step, exercise id, placement, and tool
   timings (name, duration, success), not audio or images.
 - Transcripts and worksheet images are sent only to the configured hosted
-  providers (intent and vision respectively).
+  providers (intent and vision respectively). If `TUTOR_RENDERER=llm` is
+  explicitly enabled, the vetted tutor line and the child's answer are also
+  sent to the renderer route; the demo uses `template`.
 
 ## 6. Known limits
 
 - English only; Grade 3 fixed worksheet with 12 items.
 - Vision and intent depend on the hosted provider; latency varies with the
   network and provider load.
-- VoxPocket is not streaming, so first-audio latency equals full generation.
+- The default browser voice depends on the laptop's installed voices; its
+  quality and latency vary by browser and OS.
+- VoxPocket is not streaming, so in the opt-in build first-audio latency equals
+  full generation.
 - Occasional VoxPocket badcase retries can exceed the 20 s watchdog; the
   browser voice covers the line.
 - All live proof so far uses a synthetic camera frame (`docs/image.png`) and
@@ -264,8 +280,8 @@ audible pause before the summary is about **1-1.5 s**, not a full extra 3 s.
   `intent.interpret`, `vision.parse_worksheet`) for real API requests.
 - Request timings: HTTP client wall clock around `/turn` and `/snapshot`.
 - Browser start: Playwright smoke with a fake camera and fake microphone.
-- TTS: HTTP wall clock around `POST /tts`; cold measurement was the first
-  request after service start.
+- TTS: HTTP wall clock around `POST /tts` for the optional VoxPocket build;
+  cold measurement was the first request after service start.
 - Samples: 5 warm turns across the timing runs, 2 snapshots, 10 post-fix
   direct vision reads, 5 browser starts, 4 warm TTS lines. Ranges are reported
   rather than single medians.

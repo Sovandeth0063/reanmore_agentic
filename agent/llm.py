@@ -24,6 +24,8 @@ VALID_INTENTS = {
     "READY",
     "CHOOSE_EXERCISE",
     "ASK_STEP",
+    "HELP",
+    "ASK_ANSWER",
     "REPEAT",
     "CHECK_WRITING",
     "CHECK_SPOKEN_ANSWER",
@@ -45,15 +47,22 @@ _INTENT_TIMEOUT_SECONDS = 10.0
 _SYSTEM_PROMPT = (
     "Return JSON only. Fields: intent, exercise_id, candidate_answer, "
     "guidance_step, section, number. "
-    "intent is exactly one of REVIEW, READY, CHOOSE_EXERCISE, ASK_STEP, "
-    "REPEAT, CHECK_WRITING, CHECK_SPOKEN_ANSWER, NEXT, DONE, "
+    "intent is exactly one of REVIEW, READY, CHOOSE_EXERCISE, ASK_STEP, HELP, "
+    "ASK_ANSWER, REPEAT, CHECK_WRITING, CHECK_SPOKEN_ANSWER, NEXT, DONE, "
     "LIST_WORKSHEET, OFF_TOPIC, UNCLEAR. "
+    "'I don't understand', 'help me', or a request for an explanation is "
+    "HELP. 'Just tell me the answer' is ASK_ANSWER; encourage another try and "
+    "never reveal the answer. "
     "section is A or B and number is 1 to 6. A bare number such as "
     "'number two' has exercise_id null and section null; never guess a "
-    "section. When the student is working on paper, 'check my answer' means "
-    "CHECK_WRITING. Use CHECK_SPOKEN_ANSWER only for a clearly spoken number "
-    "with no paper reference. Use only the supplied exercise and state. "
-    "Never state an unverified number."
+    "section. When an exercise is already active and the student says only a "
+    "number, that is a spoken answer: use CHECK_SPOKEN_ANSWER with "
+    "candidate_answer set to the number. Use CHOOSE_EXERCISE only when the "
+    "student is choosing an exercise or names a section, such as 'let's do "
+    "B2' or 'section B number 2'. When the student is working on paper, "
+    "'check my answer' means CHECK_WRITING. Use CHECK_SPOKEN_ANSWER for a "
+    "clearly spoken number with no paper reference. Use only the supplied "
+    "exercise and state. Never state an unverified number."
 )
 
 

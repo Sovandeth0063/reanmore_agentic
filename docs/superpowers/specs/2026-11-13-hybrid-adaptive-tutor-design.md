@@ -140,7 +140,7 @@ Two implementations:
 
 Validation for the hosted renderer:
 
-- Text is 1-2 sentences and at most 240 characters.
+- Text is 1-4 short sentences and at most 240 characters.
 - Every number in the text is in `allowed_numbers`; otherwise reject. The
   guard reads both digits and English number words (0-100), because the demo
   is voice-first and the child may hear "fifteen" even when the model writes
@@ -148,8 +148,8 @@ Validation for the hosted renderer:
 - Reject and use the template on timeout, HTTP failure, invalid JSON, or a
   guard violation.
 - No text/prompt logging.
-- Timeout: **1.2 s**, inside the 3.5 s warm-turn budget. The 4 s figure was a
-  hard failure bound; it is too slow to be the fallback trigger.
+- Timeout: **3.0 s** on the live route (the original 1.2 s was too short; the
+  demo uses the template renderer).
 
 When the hosted renderer runs:
 
@@ -162,7 +162,7 @@ When the hosted renderer runs:
 ### 3. Controller and API
 
 - Add `TUTOR_FLOW` (`choice` safe default; `.env` demo sets `guided`) and
-  `TUTOR_RENDERER` (`template` safe default; `.env` demo sets `llm`) to
+  `TUTOR_RENDERER` (`template` safe and demo default; `llm` opt-in) to
   `Settings`, `.env.example`, and validation. Existing tests keep their
   current behavior; the scenario runner and demo `.env` opt into guided and
   LLM rendering explicitly.
@@ -334,14 +334,14 @@ above reflects them.
 | --- | --- |
 | Can praise restate the answer? | Yes, only an answer the child has already earned. The forbidden set is the answer of an unsolved exercise. Auto-advance allowed numbers = solved exercise (with its answer) plus next exercise operands (without its answer). |
 | Idle prompt location | Browser `web/src/session.ts`; fixed template; no API change. |
-| Frozen invariants / defaults | `TUTOR_FLOW=choice` and `TUTOR_RENDERER=template` are safe defaults; `.env` demo sets `guided`/`llm`. Guided composes existing transitions, so the transition table and architecture §3.9 are unchanged. Existing tests stay green. |
+| Frozen invariants / defaults | `TUTOR_FLOW=choice` and `TUTOR_RENDERER=template` are safe defaults; the demo `.env` sets `guided`/`template`. Guided composes existing transitions, so the transition table and architecture §3.9 are unchanged. Existing tests stay green. |
 | Intermediate equals final / early final | Final match first, so single-step exercises always PRAISE. An early final answer is accepted and completes the exercise. A non-final expected intermediate advances `current_step`, resets attempts, and asks the next step. |
 | Answer release | v1 never reveals the final answer. After three attempts, "tell me" returns the next vetted hint and an invitation to try together; no confirmation state. |
 | Number words in the guard | Extend the shared number parser to English words 0-100. Use it in `_coerce_answer`, `numbers_in`, and the renderer guard; guard-check vetted hints at authoring time. |
 | `--mode both` equality | Text pass pins `TUTOR_RENDERER=template`; voice uses the configured renderer. Compare structure, not exact text; report a text-diff count. |
 | What is real in each mode | Text uses a checked-in 12-item parse fixture. Voice uses the real vision snapshot, STT, intent, and TTS. Live voice is opt-in; the runner checks health but does not start services. |
 | Wrap-up content | Fixed encouraging line when B6 is completed; no new persisted completed list. The runner tracks coverage for the milestone. |
-| Render timeout vs budget | 1.2 s timeout, inside the 3.5 s warm-turn target; template fallback on timeout. |
+| Render timeout vs budget | 3.0 s timeout; template fallback. The demo uses template, so the hosted delay is opt-in. |
 
 ## What is left to the builder
 
@@ -363,3 +363,20 @@ above reflects them.
   it in sync with the lesson data.
 - A real child's speech is less predictable than the script; the intent
   classifier and template fallback still need a rehearsal.
+
+## Demo configuration ruling (2026-11-13, live evidence)
+
+- **Voice:** browser `SpeechSynthesis` is the demo default. VoxPocket remains
+  opt-in (`VITE_TTS=voxpocket`); live samples showed English short-word/math
+  quality and 25-50 s latency that are unsuitable for the child-facing demo.
+- **Wording:** the demo `.env` uses `TUTOR_RENDERER=template`. The hosted
+  renderer is implemented and tested, but a live text run had a ~64 s provider
+  stall and the global leak scan false-positived on printed operands/duplicate
+  answers. The template is concise (the spoken-check disclaimer and "Let's
+  work on" lead-in were removed) and keeps the turn near 2 s before browser
+  speech. `llm` remains opt-in.
+- **Renderer deadline:** the live hosted route needed 3.0 s, not the original
+  1.2 s; `agent/render.py` uses 3.0 s with template fallback.
+- **Evidence:** `docs/scenarios/results/2026-11-13-ip3_homework2-text.json` is
+  the demo report. The hosted-renderer and VoxPocket voice files in that folder
+  are labelled experimental/diagnostic, not demo evidence.

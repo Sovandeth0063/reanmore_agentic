@@ -61,6 +61,9 @@ class SpeechEngine(Protocol):
 
 class TtsRequest(BaseModel):
     text: str
+    # Tutor lines keep the designed voice. Student test lines pass false so a
+    # one-word line is not distorted by the tutor style prompt.
+    voice_prompt: bool = True
 
 
 class SpeechService:
@@ -101,9 +104,19 @@ class SpeechService:
                 self._engine = self._factory()
             return self._engine
 
-    def synthesize(self, text: str) -> bytes:
-        """Generate one tutor line as a PCM16 WAV at the engine's rate."""
-        chunks = [f"{VOICE_PROMPT} {sentence}" for sentence in split_sentences(text)]
+    def synthesize(self, text: str, voice_prompt: bool = True) -> bytes:
+        """Generate one line as a PCM16 WAV at the engine's rate.
+
+        ``voice_prompt`` defaults to true for tutor replies. A student test
+        line passes false: the designed tutor style distorts a one-word
+        utterance, and the service only needs intelligible speech for STT.
+        """
+        sentences = split_sentences(text)
+        chunks = (
+            [f"{VOICE_PROMPT} {sentence}" for sentence in sentences]
+            if voice_prompt
+            else sentences
+        )
         with self._generate_lock:
             engine = self.engine()
             sample_rate = self.sample_rate
@@ -141,6 +154,27 @@ def _pcm16(samples: Sequence[float]) -> bytes:
     return bytes(frame)
 
 
+class VoxCPMEngine:
+    """Adapt one VoxCPM model to the service's simple generate protocol.
+
+    VoxCPM's badcase retry can spend 25-50 s on a short student line, which the
+    demo's turn budget cannot absorb and speech-to-text does not need. The
+    adapter passes ``retry_badcase=False`` on every call and keeps the model's
+    sample rate, defaulting to the service's 44.1 kHz when the model does not
+    report one. The module still imports ``voxcpm`` only inside the factory.
+    """
+
+    def __init__(self, model) -> None:
+        self.model = model
+        rate = getattr(model, "sample_rate", DEFAULT_SAMPLE_RATE)
+        self.sample_rate = (
+            rate if isinstance(rate, int) and rate > 0 else DEFAULT_SAMPLE_RATE
+        )
+
+    def generate(self, text: str) -> Sequence[float]:
+        return self.model.generate(text=text, retry_badcase=False)
+
+
 def _default_engine_factory() -> SpeechEngine:
     """Import VoxCPM and load the cache without touching the network.
 
@@ -153,7 +187,7 @@ def _default_engine_factory() -> SpeechEngine:
         Path.home() / "voxcpm-hf"
     )
     local_files_only = os.getenv("VOXPOCKET_ALLOW_DOWNLOAD") != "1"
-    return VoxCPM.from_pretrained(
+    model = VoxCPM.from_pretrained(
         MODEL_ID,
         load_denoiser=False,
         optimize=False,
@@ -161,6 +195,7 @@ def _default_engine_factory() -> SpeechEngine:
         cache_dir=cache_dir,
         local_files_only=local_files_only,
     )
+    return VoxCPMEngine(model)
 
 
 def create_app(engine_factory: Callable[[], SpeechEngine] | None = None) -> FastAPI:
@@ -192,7 +227,11 @@ def create_app(engine_factory: Callable[[], SpeechEngine] | None = None) -> Fast
                 f"text must be at most {MAX_TEXT_CHARACTERS} characters",
             )
         try:
-            audio = await asyncio.to_thread(service.synthesize, text)
+            audio = await asyncio.to_thread(
+                service.synthesize,
+                text,
+                voice_prompt=request.voice_prompt,
+            )
         except Exception as error:  # noqa: BLE001 - one redacted failure path
             # The line, prompt, and key never reach the log; only the type.
             logger.warning(

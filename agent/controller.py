@@ -12,12 +12,14 @@ from collections.abc import Callable, Sequence
 from time import perf_counter
 from typing import Protocol
 
+from agent.calculator import CheckResult, verified_numbers
 from agent.image_ops import ImageError, sheet_crop
 from agent.intent_parser import parse_clear_intent
-from agent.lesson import Exercise, Lesson
+from agent.lesson import Exercise, Lesson, Step
 from agent.llm import IntentError, TutorIntent
 from agent.memory import SessionState, SessionStore
-from agent.responses import placement_prompt, select_response
+from agent.render import RenderRequest, Renderer, TemplateRenderer
+from agent.responses import numbers_in, placement_prompt, select_response
 from agent.sheet_layout import (
     AREA_OK,
     LayoutError,
@@ -26,6 +28,7 @@ from agent.sheet_layout import (
 )
 from agent.stt import STTError, Transcript, decode_pcm16le
 from agent.tutor import (
+    CheckOutcome,
     InvalidTransition,
     TutorSession,
     TutorState,
@@ -73,6 +76,20 @@ _ALIASED_INTENTS = {"CHOOSE": "CHOOSE_EXERCISE"}
 # the utterance also contains a candidate number.
 _WRITTEN_WORK_WORDS = ("write", "writing", "written", "paper", "sheet", "work")
 
+# A guided session is "in progress" only while an exercise is underway. Praise
+# and wrap-up have no exercise to stay on, so a spoken choice there is a real
+# state error rather than a "finish this one first" line.
+_GUIDED_IN_PROGRESS_STATES = frozenset(
+    {
+        TutorState.PRESENT_EXERCISE,
+        TutorState.STUDENT_WORKING,
+        TutorState.OBSERVE_WORK,
+        TutorState.CHECK_ANSWER,
+        TutorState.GUIDE,
+        TutorState.RECOVER,
+    }
+)
+
 
 def _mentions_written_work(transcript: str) -> bool:
     text = transcript.lower()
@@ -91,6 +108,23 @@ def _normalize_intent_name(intent: TutorIntent) -> str:
     if name == "CHECK_ANSWER":
         return "CHECK_SPOKEN_ANSWER" if _has_candidate(intent) else "CHECK_WRITING"
     return _ALIASED_INTENTS.get(name, name)
+
+
+def _select_hint(step: Step | None, attempts: int) -> str:
+    """One vetted hint, rotating deterministically as attempts accumulate."""
+    if step is None or not step.hints:
+        return ""
+    return step.hints[attempts % len(step.hints)]
+
+
+def _is_correct_intermediate(exercise: Exercise, result: CheckResult) -> bool:
+    """True when the child's number is a correct, non-final step answer."""
+    if result.correct or result.student_answer is None:
+        return False
+    return any(
+        step.expected_intermediate == result.student_answer
+        for step in exercise.steps
+    )
 
 
 class TranscriberLike(Protocol):
@@ -130,6 +164,8 @@ class TutorController:
         min_confidence: float | None = None,
         close: Callable[[], None] | None = None,
         layout: SheetLayout | None = None,
+        renderer: Renderer | None = None,
+        flow_mode: str = "choice",
     ) -> None:
         self.session_id = session_id
         self.lesson = lesson
@@ -137,6 +173,10 @@ class TutorController:
         self.vision = vision
         self.intent = intent
         self.transcriber = transcriber
+        self.renderer = renderer or TemplateRenderer()
+        # The caller (runtime or test) chooses the flow; choice is the safe
+        # default so every pre-existing session behaves as before.
+        self.flow_mode = flow_mode
         self.layout = layout if layout is not None else load_layout()
         self.min_confidence = (
             self.MIN_TRANSCRIPT_CONFIDENCE
@@ -273,17 +313,53 @@ class TutorController:
                 STATUS_LISTENING,
                 exercise_id=state.chosen_exercise,
             )
+        if (
+            name == "CHOOSE_EXERCISE"
+            and self.tutor.state == TutorState.STUDENT_WORKING
+            and intent.exercise_id is None
+            and intent.section is None
+            and intent.number is not None
+        ):
+            # While an exercise is in progress a bare number is the child's
+            # spoken answer, not an exercise choice: "two" is the ones digit
+            # of A3, not a request for B2. A qualified choice ("B2", "section
+            # B number 2") still reaches the stay-on-exercise guard below.
+            intent = TutorIntent(
+                intent="CHECK_SPOKEN_ANSWER",
+                exercise_id=None,
+                candidate_answer=str(intent.number),
+                guidance_step=intent.guidance_step,
+            )
+            name = "CHECK_SPOKEN_ANSWER"
         if name == "CHOOSE_EXERCISE":
             if not state.placement_confirmed:
                 return self._placement_retry(PLACEMENT_MISSING)
             # Prefer the structured exercise, then section plus number, then
-            # the transcript. A bare number stays ambiguous in the tutor.
+            # the transcript. A bare number outside working stays ambiguous;
+            # while working it was already treated as a spoken answer above.
             spoken = intent.exercise_id
             if not spoken and intent.section is not None and intent.number is not None:
                 spoken = f"{intent.section}{intent.number}"
             try:
                 text = self.tutor.choose(spoken or transcript)
             except InvalidTransition as error:
+                # Guided practice is one exercise at a time. A spoken choice
+                # mid-exercise stays on the current item instead of surfacing
+                # a 409 to the browser; choice mode keeps the original guard.
+                current = self._require_state().chosen_exercise
+                if (
+                    self.flow_mode == "guided"
+                    and current is not None
+                    and self.tutor.state in _GUIDED_IN_PROGRESS_STATES
+                ):
+                    # One exercise at a time. After a completed exercise the
+                    # tutor has already moved on, so this never speaks the
+                    # finish line from Praise or WrapUp.
+                    return self._response(
+                        select_response("stay_on_exercise"),
+                        STATUS_SPEAKING,
+                        exercise_id=current,
+                    )
                 raise self._not_allowed(
                     "The tutor is not ready for an exercise choice"
                 ) from error
@@ -306,6 +382,21 @@ class TutorController:
                 ) from error
             return self._response(
                 text, STATUS_SPEAKING, exercise_id=state.chosen_exercise
+            )
+        if name in {"HELP", "ASK_ANSWER"}:
+            exercise = self._selected_exercise(state)
+            if exercise is None:
+                if not state.placement_confirmed:
+                    return self._placement_retry(PLACEMENT_MISSING)
+                try:
+                    text = self.tutor.list_worksheet()
+                except InvalidTransition:
+                    return self._placement_retry(PLACEMENT_MISSING)
+                return self._response(text, STATUS_LISTENING)
+            return self._response(
+                self._help_or_answer(name, exercise, state),
+                STATUS_SPEAKING,
+                exercise_id=exercise.id,
             )
         if name in {"CHECK_WRITING", "CHECK_SPOKEN_ANSWER"}:
             if state.chosen_exercise is None:
@@ -330,18 +421,28 @@ class TutorController:
                     exercise_id=state.chosen_exercise,
                 )
             try:
-                text, _ = self.tutor.check(
+                outcome = self.tutor.check_with_mode(
                     intent.candidate_answer, intent.guidance_step
                 )
             except InvalidTransition as error:
                 raise self._not_allowed(
                     "The tutor is not ready to check an answer"
                 ) from error
-            # A genuine spoken check is never described as a paper read.
+            exercise = self._selected_exercise(state)
+            text = (
+                self._render_check(outcome, exercise, state)
+                if exercise is not None
+                else outcome.text
+            )
+            # A genuine spoken check is never described as a paper read. The
+            # outcome text speaks directly: the old spoken-only disclaimer is
+            # not repeated on every answer (it only costs TTS time).
+            # After a guided auto-advance the response names the exercise the
+            # child is now working on, not the one just completed.
             return self._response(
-                select_response("spoken_only_fallback") + " " + text,
+                text,
                 STATUS_SPEAKING,
-                exercise_id=state.chosen_exercise,
+                exercise_id=self._require_state().chosen_exercise,
             )
         if name == "NEXT":
             if not state.placement_confirmed:
@@ -407,6 +508,23 @@ class TutorController:
                 self.tutor.resume(),
                 STATUS_SPEAKING,
                 exercise_id=state.chosen_exercise,
+            )
+        if self.flow_mode == "guided":
+            # Guided practice starts at A1 in lesson order. Placement is
+            # confirmed first; begin_guided composes the existing transitions
+            # and never speaks the choice question.
+            self._confirm_placement(state)
+            try:
+                text = self.tutor.begin_guided(worksheet)
+            except InvalidTransition as error:
+                raise self._not_allowed(
+                    "The tutor is not ready to start guided practice"
+                ) from error
+            chosen = self._require_state().chosen_exercise
+            if chosen is None:
+                return self._response(text, STATUS_LISTENING)
+            return self._response(
+                text, STATUS_SPEAKING, exercise_id=chosen
             )
         if self.tutor.state in {
             TutorState.GREETING,
@@ -510,7 +628,7 @@ class TutorController:
                 exercise_id=state.chosen_exercise,
             )
         try:
-            text, _ = self.tutor.check_handwriting(reading)
+            outcome = self.tutor.check_handwriting_with_mode(reading)
         except InvalidTransition as error:
             raise self._not_allowed(
                 "The tutor is not ready to read handwriting"
@@ -518,13 +636,27 @@ class TutorController:
         if is_uncertain_reading(reading):
             # Uncertain reads ask for a clearer answer and stay retryable.
             return self._response(
-                text,
+                outcome.text,
                 STATUS_ADJUST_SHEET,
                 capture_request=CAPTURE_CHECK,
                 exercise_id=state.chosen_exercise,
             )
+        if outcome.result is None:
+            # Already completed: the tutor asks for the next choice instead
+            # of grading the same item again.
+            return self._response(
+                outcome.text,
+                STATUS_SPEAKING,
+                exercise_id=state.chosen_exercise,
+            )
+        # Rendering a graded read is the same turn as a spoken check: a wrong
+        # answer hints, and a completed guided exercise auto-advances. The
+        # post-advance exercise is what the response names.
+        text = self._render_check(outcome, exercise, state)
         return self._response(
-            text, STATUS_SPEAKING, exercise_id=state.chosen_exercise
+            text,
+            STATUS_SPEAKING,
+            exercise_id=self._require_state().chosen_exercise,
         )
 
     def _wrong_area(self, exercise_id: str) -> SessionResponse:
@@ -534,6 +666,163 @@ class TutorController:
             STATUS_ADJUST_SHEET,
             capture_request=CAPTURE_CHECK,
             exercise_id=exercise_id,
+        )
+
+    def _render(
+        self,
+        mode: str,
+        exercise: Exercise,
+        step: Step | None,
+        child_answer: str | None,
+        template_text: str,
+        allowed: set[int],
+    ) -> str:
+        """Rephrase one deterministic line; a renderer failure keeps it.
+
+        The renderer only chooses words, so any failure is contained here: the
+        template is still spoken and ``tutor.render`` records the failure.
+        """
+        started = perf_counter()
+        try:
+            result = self.renderer.render(
+                RenderRequest(
+                    mode=mode,
+                    exercise=exercise,
+                    step=step,
+                    child_answer=child_answer,
+                    template_text=template_text,
+                    allowed_numbers=frozenset(allowed),
+                )
+            )
+        except Exception as error:  # noqa: BLE001 - wording must never break a turn
+            self._record_tool("tutor.render", started, error)
+            return template_text
+        provider = getattr(result, "provider", "template")
+        text = getattr(result, "text", None)
+        if not isinstance(text, str) or not text.strip():
+            text = template_text
+        self._record_tool(
+            "tutor.render",
+            started,
+            details=provider,
+            success=not getattr(result, "fallback", False),
+        )
+        return text.strip() or template_text
+
+    def _render_check(
+        self,
+        outcome: CheckOutcome,
+        exercise: Exercise,
+        state: SessionState,
+    ) -> str:
+        """Render a checked answer with the numbers this turn may speak.
+
+        ``state`` is the pre-check snapshot, so ``attempts`` selects the hint
+        that belongs to this attempt rather than one rotated by the check. A
+        wrong answer speaks that hint; a completed guided answer also advances
+        to the next exercise in the same rendered turn, so both the spoken and
+        handwritten check paths share one auto-advance.
+        """
+        if outcome.mode == "noop":
+            return outcome.text
+        current = self._require_state()
+        step = outcome.step or self._current_step(exercise, current)
+        hint = _select_hint(step, state.attempts)
+        allowed = verified_numbers(
+            exercise, include_answer=outcome.completed
+        )
+        allowed.update(numbers_in(hint))
+        child_answer = None
+        result = outcome.result
+        if result is not None and result.student_answer is not None:
+            child_answer = str(result.student_answer)
+            if _is_correct_intermediate(exercise, result):
+                # A correct intermediate is already a verified number; the
+                # explicit add documents that it may be spoken back.
+                allowed.add(int(result.student_answer))
+        wrong_answer = (
+            result is not None
+            and not result.correct
+            and not _is_correct_intermediate(exercise, result)
+        )
+        template_text = outcome.text
+        if outcome.mode in {"hint", "explain"} and wrong_answer and hint:
+            # A wrong answer speaks the vetted hint for this attempt, not the
+            # generic step line, so the first and second misses differ and the
+            # template path reaches the child with the authored hint.
+            template_text = hint
+        if outcome.completed and self.flow_mode == "guided":
+            try:
+                advance = self.tutor.advance_guided()
+            except InvalidTransition:
+                # Praise still stands even if the next presentation fails.
+                advance = ""
+            if advance:
+                template_text = f"{template_text} {advance}".strip()
+                next_exercise = self._selected_exercise(self._require_state())
+                if (
+                    next_exercise is not None
+                    and next_exercise.id != exercise.id
+                ):
+                    # The presentation names the next exercise and its printed
+                    # problem; never its unsolved answer or intermediates.
+                    next_numbers = numbers_in(
+                        f"{next_exercise.id} {next_exercise.problem}"
+                    )
+                    # B6's problem "25 / 5" prints its own answer, so the
+                    # printed-number union alone would release it.
+                    next_numbers.discard(int(next_exercise.answer))
+                    allowed.update(next_numbers)
+        return self._render(
+            outcome.mode,
+            exercise,
+            step,
+            child_answer,
+            template_text,
+            allowed,
+        )
+
+    def _help_or_answer(
+        self, name: str, exercise: Exercise, state: SessionState
+    ) -> str:
+        """Explain the current step or encourage another try, never answer it."""
+        step = self._current_step(exercise, state)
+        hint = _select_hint(step, state.attempts)
+        if name == "ASK_ANSWER":
+            encouragement = select_response("ready_with_exercise")
+            template_text = (
+                f"{hint} {encouragement}" if hint else encouragement
+            )
+            mode = "hint"
+        else:
+            question = (
+                step.prompt if step is not None else select_response("ask_step")
+            )
+            template_text = f"{hint} {question}" if hint else question
+            mode = "explain"
+        allowed = verified_numbers(exercise, include_answer=False)
+        allowed.update(numbers_in(hint))
+        return self._render(
+            mode, exercise, step, None, template_text, allowed
+        )
+
+    def _selected_exercise(self, state: SessionState) -> Exercise | None:
+        if state.chosen_exercise is None:
+            return None
+        try:
+            return self.lesson.get(state.chosen_exercise)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _current_step(exercise: Exercise, state: SessionState) -> Step | None:
+        return next(
+            (
+                step
+                for step in exercise.steps
+                if step.index == state.current_step
+            ),
+            None,
         )
 
     def _summary(self) -> str:
@@ -613,13 +902,15 @@ class TutorController:
         started: float,
         error: Exception | None = None,
         details: str = "",
+        success: bool | None = None,
     ) -> None:
+        succeeded = error is None if success is None else success
         self.store.append_tool_call(
             self.session_id,
             name,
             details=type(error).__name__ if error is not None else details,
             duration_ms=(perf_counter() - started) * 1000,
-            success=error is None,
+            success=succeeded,
         )
 
     @staticmethod

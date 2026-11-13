@@ -92,6 +92,56 @@ class LessonFlowTests(unittest.TestCase):
         self.assertTrue(second_result.correct)
         self.assertIn("correct", response.lower())
 
+    def test_guided_flow_takes_an_intermediate_then_the_final_answer(self) -> None:
+        session = TutorSession(self.lesson, self.store, "guided-steps")
+
+        session.begin_guided(valid_sheet(self.lesson))
+        hint = session.check_with_mode("nine")
+
+        self.assertEqual(hint.mode, "hint")
+        self.assertEqual(self.store.get("guided-steps").current_step, 2)
+        self.assertEqual(self.store.get("guided-steps").attempts, 0)
+
+        praise = session.check_with_mode("15")
+
+        self.assertEqual(praise.mode, "praise")
+        self.assertTrue(praise.completed)
+        self.assertIn("A2", session.advance_guided())
+
+    def test_guided_flow_advances_every_exercise_and_wraps_up(self) -> None:
+        session = TutorSession(self.lesson, self.store, "guided-flow")
+
+        text = session.begin_guided(valid_sheet(self.lesson))
+
+        self.assertIn("A1", text)
+        self.assertIn(self.lesson.get("A1").problem, text)
+        self.assertEqual(session.state, TutorState.STUDENT_WORKING)
+
+        for position, exercise in enumerate(self.lesson.exercises):
+            with self.subTest(exercise=exercise.id):
+                outcome = session.check_with_mode(str(exercise.answer))
+                self.assertEqual(outcome.mode, "praise")
+                self.assertTrue(outcome.completed)
+
+                text = session.advance_guided()
+
+                if position + 1 < len(self.lesson.exercises):
+                    following = self.lesson.exercises[position + 1]
+                    self.assertIn(following.id, text)
+                    self.assertIn(following.problem, text)
+                    self.assertEqual(
+                        self.store.get("guided-flow").chosen_exercise,
+                        following.id,
+                    )
+                    self.assertEqual(
+                        self.store.get("guided-flow").current_step, 1
+                    )
+                    self.assertEqual(self.store.get("guided-flow").attempts, 0)
+                else:
+                    self.assertEqual(text, select_response("wrap_up"))
+
+        self.assertEqual(session.state, TutorState.WRAP_UP)
+
     def test_check_in_praise_routes_to_more_practice(self) -> None:
         self.session.start(valid_sheet(self.lesson))
         self.session.choose("A1")

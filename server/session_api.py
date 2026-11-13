@@ -195,12 +195,15 @@ class _Runtime:
 
         def factory(session_id: str) -> TutorController:
             from agent.llm import build_intent_client
+            from agent.render import build_renderer
             from agent.vision import VisionClient
 
             # Every controller borrows the same client and transcriber. The
             # runtime owns their lifecycle, so no close hook is passed. The
-            # intent client is selected per settings and carries this session
-            # id so the hosted route gets a stable attribution header.
+            # intent client and renderer are selected per settings and carry
+            # this session id so the hosted route gets a stable attribution
+            # header. The renderer is per controller because it holds that
+            # header; the template renderer is stateless either way.
             return TutorController(
                 session_id,
                 lesson=lesson,
@@ -212,6 +215,12 @@ class _Runtime:
                     settings, http=http, session_id=session_id
                 ),
                 transcriber=transcriber,
+                renderer=build_renderer(
+                    settings, http=http, session_id=session_id
+                ),
+                # The configured flow; choice stays the safe default so an
+                # unset environment behaves exactly as before.
+                flow_mode=settings.tutor_flow,
             )
 
         return factory

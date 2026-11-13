@@ -183,6 +183,42 @@ class RuntimeTranscriberSettingsTests(unittest.TestCase):
             [(("small.en",), {"device": "cpu", "compute_type": "int8"})],
         )
 
+    def test_guided_renderer_settings_do_not_touch_the_shared_providers(
+        self,
+    ) -> None:
+        from agent.config import Settings
+        from server.session_api import _Runtime
+
+        built: list[str] = []
+
+        class RecordingTranscriber:
+            def __init__(self, *args, **kwargs) -> None:
+                built.append("transcriber")
+
+        class RecordingClient:
+            def __init__(self, *args, **kwargs) -> None:
+                built.append("client")
+
+            def close(self) -> None:
+                pass
+
+        runtime = _Runtime(
+            settings=Settings(tutor_flow="guided", tutor_renderer="llm")
+        )
+        try:
+            with patch("httpx.Client", RecordingClient), patch(
+                "agent.stt.Transcriber", RecordingTranscriber
+            ), patch("agent.render.build_renderer") as build:
+                # Providers are process-wide: asking twice builds each once.
+                runtime._build_shared_providers()
+                runtime._build_shared_providers()
+        finally:
+            runtime.close()
+
+        self.assertEqual(built, ["client", "transcriber"])
+        # Renderers belong to controllers, never to the shared runtime.
+        build.assert_not_called()
+
 
 class TranscriberConcurrencyTests(unittest.TestCase):
     def test_concurrent_first_turns_load_one_model(self) -> None:

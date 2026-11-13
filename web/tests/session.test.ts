@@ -9,10 +9,12 @@ import type {
   SpeechHandlers,
   TutorSessionUi,
   TutorSpeech,
+  TutorTimers,
 } from "../src/session.ts";
 import type { CameraState } from "../src/status.ts";
 import {
   CAMERA_NOT_READY_STATUS,
+  DEFAULT_IDLE_PROMPT,
   IMAGE_TOO_LARGE_STATUS,
   RETRY_STATUS,
   createTutorSession,
@@ -56,6 +58,68 @@ interface SnapshotRequest {
   image: Blob;
   purpose: CapturePurpose;
   exerciseId?: string;
+}
+
+/** A deterministic clock: nothing fires until ``advance`` reaches it. */
+class FakeTimers implements TutorTimers {
+  private nextId = 1;
+  private now = 0;
+  private readonly scheduled = new Map<
+    number,
+    { callback: () => void; at: number }
+  >();
+
+  setTimeout(callback: () => void, ms: number): unknown {
+    const id = this.nextId;
+    this.nextId += 1;
+    this.scheduled.set(id, { callback, at: this.now + ms });
+    return id;
+  }
+
+  clearTimeout(id: unknown): void {
+    this.scheduled.delete(id as number);
+  }
+
+  get pending(): number {
+    return this.scheduled.size;
+  }
+
+  advance(ms: number): void {
+    const target = this.now + ms;
+    for (;;) {
+      const next = this.earliestBefore(target);
+      if (!next) {
+        break;
+      }
+      this.now = next.at;
+      this.scheduled.delete(next.id);
+      next.callback();
+    }
+    this.now = target;
+  }
+
+  private earliestBefore(
+    target: number,
+  ): { id: number; at: number; callback: () => void } | null {
+    let earliest: {
+      id: number;
+      at: number;
+      callback: () => void;
+    } | null = null;
+    for (const [id, entry] of this.scheduled) {
+      if (entry.at > target) {
+        continue;
+      }
+      if (
+        !earliest
+        || entry.at < earliest.at
+        || (entry.at === earliest.at && id < earliest.id)
+      ) {
+        earliest = { id, at: entry.at, callback: entry.callback };
+      }
+    }
+    return earliest;
+  }
 }
 
 class FakeClient implements SessionClient {
@@ -168,12 +232,17 @@ class FakeRecorder implements TutorRecorder {
 class FakeSpeech implements TutorSpeech {
   readonly spoken: string[] = [];
   cancels = 0;
+  /** When true, speech ends inside ``speak`` (models an instant turn reply). */
+  autoFinish = false;
   private readonly handlers: Array<SpeechHandlers | undefined> = [];
 
   speak(text: string, handlers?: SpeechHandlers): void {
     this.spoken.push(text);
     this.handlers.push(handlers);
     handlers?.onStart?.();
+    if (this.autoFinish) {
+      this.finishLast();
+    }
   }
 
   cancel(): void {
@@ -181,7 +250,11 @@ class FakeSpeech implements TutorSpeech {
   }
 
   finishLast(): void {
-    this.handlers[this.handlers.length - 1]?.onEnd?.();
+    this.finishAt(this.handlers.length - 1);
+  }
+
+  finishAt(index: number): void {
+    this.handlers[index]?.onEnd?.();
   }
 }
 
@@ -238,24 +311,34 @@ class FakeUi implements TutorSessionUi {
   }
 }
 
-function makeHarness() {
+interface HarnessOptions {
+  timers?: FakeTimers;
+  idlePromptMs?: number;
+  idlePrompt?: string;
+}
+
+function makeHarness(options: HarnessOptions = {}) {
   const client = new FakeClient();
   const camera = new FakeCamera();
   const recorder = new FakeRecorder();
   const speech = new FakeSpeech();
   const ui = new FakeUi();
+  const timers = options.timers ?? new FakeTimers();
   const session = createTutorSession({
     client,
     camera,
     recorder,
     speech,
     ui,
+    timers,
+    idlePromptMs: options.idlePromptMs,
+    idlePrompt: options.idlePrompt,
   });
-  return { client, camera, recorder, speech, ui, session };
+  return { client, camera, recorder, speech, ui, timers, session };
 }
 
-async function startHarness() {
-  const harness = makeHarness();
+async function startHarness(options: HarnessOptions = {}) {
+  const harness = makeHarness(options);
   await harness.session.start();
   harness.speech.spoken.length = 0;
   harness.speech.cancels = 0;
@@ -680,5 +763,149 @@ test("a response without an exercise leaves the previous selection alone", async
   await harness.session.handleUtterance(utterance());
 
   assert.deepEqual(harness.ui.exercises, ["B2"]);
+});
+
+test("an idle session speaks one gentle prompt", async () => {
+  const harness = await startHarness({
+    idlePromptMs: 100,
+    idlePrompt: "Take your time.",
+  });
+
+  // The opening line has to end before the idle clock starts.
+  harness.speech.finishLast();
+  harness.timers.advance(99);
+  assert.deepEqual(harness.speech.spoken, []);
+
+  harness.timers.advance(1);
+  assert.deepEqual(harness.speech.spoken, ["Take your time."]);
+  assert.equal(harness.timers.pending, 0);
+
+  // The prompt's own end never schedules another one for this turn.
+  harness.speech.finishLast();
+  harness.timers.advance(500);
+  assert.deepEqual(harness.speech.spoken, ["Take your time."]);
+  assert.equal(harness.timers.pending, 0);
+  assert.equal(
+    harness.recorder.speechActive[harness.recorder.speechActive.length - 1],
+    false,
+  );
+});
+
+test("student speech cancels the idle prompt", async () => {
+  const harness = await startHarness({
+    idlePromptMs: 100,
+    idlePrompt: "Take your time.",
+  });
+  harness.speech.finishLast();
+
+  harness.timers.advance(99);
+  harness.session.handleSpeechStart();
+  harness.timers.advance(500);
+
+  assert.equal(harness.timers.pending, 0);
+  assert.deepEqual(harness.speech.spoken, []);
+  assert.equal(harness.speech.cancels, 1);
+});
+
+test("stop clears the idle timer", async () => {
+  const harness = await startHarness({
+    idlePromptMs: 100,
+    idlePrompt: "Take your time.",
+  });
+  harness.speech.finishLast();
+
+  await harness.session.stop();
+  harness.timers.advance(500);
+
+  assert.equal(harness.timers.pending, 0);
+  assert.deepEqual(harness.speech.spoken, []);
+});
+
+test("the default idle prompt is gentle and waits eight seconds", async () => {
+  const harness = await startHarness();
+  harness.speech.finishLast();
+
+  harness.timers.advance(7999);
+  assert.deepEqual(harness.speech.spoken, []);
+
+  harness.timers.advance(1);
+  assert.deepEqual(harness.speech.spoken, [DEFAULT_IDLE_PROMPT]);
+});
+
+test("a new student turn earns a fresh idle prompt", async () => {
+  const harness = await startHarness({
+    idlePromptMs: 100,
+    idlePrompt: "Take your time.",
+  });
+  harness.speech.finishLast();
+  harness.timers.advance(100);
+  assert.deepEqual(harness.speech.spoken, ["Take your time."]);
+  harness.speech.finishLast();
+
+  harness.client.turns.push(
+    makeResponse({ tutor_text: "Which one?", status: "listening" }),
+  );
+  await harness.session.handleUtterance(utterance());
+  harness.speech.finishLast();
+
+  harness.speech.spoken.length = 0;
+  harness.timers.advance(100);
+
+  assert.deepEqual(harness.speech.spoken, ["Take your time."]);
+});
+
+test("a student turn replaces the pending idle timer", async () => {
+  const harness = await startHarness({
+    idlePromptMs: 100,
+    idlePrompt: "Take your time.",
+  });
+  harness.speech.finishLast();
+  harness.timers.advance(50);
+
+  harness.client.turns.push(
+    makeResponse({ tutor_text: "Which one?", status: "listening" }),
+  );
+  await harness.session.handleUtterance(utterance());
+  harness.speech.finishLast();
+
+  // The first deadline is gone; the new turn gets its own full window.
+  harness.timers.advance(99);
+  assert.deepEqual(harness.speech.spoken, ["Which one?"]);
+
+  harness.timers.advance(1);
+  assert.deepEqual(harness.speech.spoken, ["Which one?", "Take your time."]);
+});
+
+test("no idle prompt is armed while the turn is still in flight", async () => {
+  const harness = await startHarness({
+    idlePromptMs: 100,
+    idlePrompt: "Take your time.",
+  });
+  harness.speech.autoFinish = true;
+  harness.client.turns.push(
+    makeResponse({ tutor_text: "Which one?", status: "listening" }),
+  );
+
+  await harness.session.handleUtterance(utterance());
+
+  assert.deepEqual(harness.speech.spoken, ["Which one?"]);
+  assert.equal(harness.timers.pending, 0);
+
+  harness.timers.advance(500);
+  assert.deepEqual(harness.speech.spoken, ["Which one?"]);
+});
+
+test("a cancelled line that ends late does not arm the idle prompt", async () => {
+  const harness = await startHarness({
+    idlePromptMs: 100,
+    idlePrompt: "Take your time.",
+  });
+
+  harness.session.handleSpeechStart();
+  harness.speech.finishAt(0);
+  harness.timers.advance(500);
+
+  assert.equal(harness.timers.pending, 0);
+  assert.deepEqual(harness.speech.spoken, []);
 });
 

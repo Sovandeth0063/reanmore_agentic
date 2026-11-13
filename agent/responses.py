@@ -113,6 +113,9 @@ _RESPONSES = {
     "ask_choice": "Which section and number would you like to start with?",
     "ask_section": "Which section is that, A or B?",
     "ask_step": "What do you think the first step is?",
+    "stay_on_exercise": (
+        "Let's finish this one first. Then we can choose another."
+    ),
     "ready_with_exercise": "Tell me your next step when you are ready.",
     "check_request": "I am looking at your answer now.",
     "unclear": "I could not read that clearly. Can you say or write it again?",

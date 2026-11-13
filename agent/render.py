@@ -23,15 +23,15 @@ from agent.responses import numbers_in
 
 
 # Inside the 3.5 s warm-turn budget; a fallback must be faster than a stall.
-RENDER_TIMEOUT_SECONDS = 1.2
+RENDER_TIMEOUT_SECONDS = 3.0
 MAX_RENDER_CHARACTERS = 240
-MAX_RENDER_SENTENCES = 2
+MAX_RENDER_SENTENCES = 4
 
 _SYSTEM_PROMPT = (
-    "You are a warm Grade 3 math tutor. Rewrite the given tutor line in one "
-    "or two short child-friendly sentences. Keep the same teaching move. Use "
-    "only numbers from the allowed list. Never state the final answer or "
-    'invent a number. Return JSON {"text": "..."}.'
+    "You are a warm Grade 3 math tutor. Rewrite the given tutor line in two "
+    "to four very short, child-friendly sentences. Keep the same teaching "
+    "move. Use only numbers from the allowed list. Never state the final "
+    'answer or invent a number. Return JSON {"text": "..."}.'
 )
 
 # A sentence ends at terminal punctuation followed by whitespace; a decimal
@@ -131,7 +131,7 @@ class HostedRenderer:
             # Never log the reply or the child's answer; fall back silently.
             return _fallback(request)
         text = _text_from_content(content)
-        if text is None or not _is_valid(text, request.allowed_numbers):
+        if text is None or not _is_valid(text, request):
             return _fallback(request)
         return RenderResult(text, self.provider, False)
 
@@ -176,13 +176,19 @@ def _text_from_content(content: object) -> str | None:
     return stripped or None
 
 
-def _is_valid(text: str, allowed_numbers: frozenset[int]) -> bool:
-    """One or two short sentences whose only numbers are verified ones."""
+def _is_valid(text: str, request: RenderRequest) -> bool:
+    """One to four short sentences that never speak an unearned number.
+
+    Every number in the reply, as a digit or an English word, must already be
+    in the turn's allowed set. This is the strict rule the template path
+    applies through ``guard_numbers``; an opt-in hosted rephrasing may not
+    speak a math number the lesson did not verify.
+    """
     if not text or len(text) > MAX_RENDER_CHARACTERS:
         return False
     if _sentence_count(text) > MAX_RENDER_SENTENCES:
         return False
-    return numbers_in(text) <= set(allowed_numbers)
+    return numbers_in(text) <= set(request.allowed_numbers)
 
 
 def _sentence_count(text: str) -> int:

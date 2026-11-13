@@ -1,0 +1,79 @@
+{
+  "placement": "ready",
+  "reason": "All twelve printed items are visible and readable.",
+  "confidence": 0.98,
+  "items": [
+    {
+      "item": "A1",
+      "section": "A",
+      "problem": "4 + 5 + 6",
+      "expression": "4 + 5 + 6"
+    },
+    {
+      "item": "A2",
+      "section": "A",
+      "problem": "63 + 24",
+      "expression": "63 + 24"
+    },
+    {
+      "item": "A3",
+      "section": "A",
+      "problem": "85 - 33",
+      "expression": "85 - 33"
+    },
+    {
+      "item": "A4",
+      "section": "A",
+      "problem": "71 - 8",
+      "expression": "71 - 8"
+    },
+    {
+      "item": "A5",
+      "section": "A",
+      "problem": "63 - 5",
+      "expression": "63 - 5"
+    },
+    {
+      "item": "A6",
+      "section": "A",
+      "problem": "100 - 48",
+      "expression": "100 - 48"
+    },
+    {
+      "item": "B1",
+      "section": "B",
+      "problem": "6 x 4",
+      "expression": "6 * 4"
+    },
+    {
+      "item": "B2",
+      "section": "B",
+      "problem": "8 x 3",
+      "expression": "8 * 3"
+    },
+    {
+      "item": "B3",
+      "section": "B",
+      "problem": "9 x 3",
+      "expression": "9 * 3"
+    },
+    {
+      "item": "B4",
+      "section": "B",
+      "problem": "20 / 4",
+      "expression": "20 / 4"
+    },
+    {
+      "item": "B5",
+      "section": "B",
+      "problem": "80 / 10",
+      "expression": "80 / 10"
+    },
+    {
+      "item": "B6",
+      "section": "B",
+      "problem": "25 / 5",
+      "expression": "25 / 5"
+    }
+  ]
+}

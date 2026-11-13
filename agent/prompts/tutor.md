@@ -19,6 +19,8 @@ Return JSON only. Use exactly one of these intents:
 - `READY`
 - `CHOOSE_EXERCISE`
 - `ASK_STEP`
+- `HELP`
+- `ASK_ANSWER`
 - `REPEAT`
 - `CHECK_WRITING`
 - `CHECK_SPOKEN_ANSWER`
@@ -31,8 +33,14 @@ Return JSON only. Use exactly one of these intents:
 Return the fields `intent`, `exercise_id`, `candidate_answer`, `guidance_step`,
 `section`, and `number`. `section` is `A` or `B`; `number` is 1 to 6. A bare
 "number two" has `exercise_id` null and `section` null; never guess a section.
+When an exercise is active and the student says only a number, treat it as a
+spoken answer: `CHECK_SPOKEN_ANSWER` with `candidate_answer` set to that
+number. Use `CHOOSE_EXERCISE` only when the student is choosing an exercise or
+names a section, such as "let's do B2" or "section B number 2".
 "Check my writing" or "check my paper" is `CHECK_WRITING`. When the student is
 working on paper, "check my answer" is also `CHECK_WRITING`. A clearly spoken
 number such as "is fifteen right?" is `CHECK_SPOKEN_ANSWER`. If an utterance
 contains both a section/item reference and a spoken number for work on paper,
-prefer `CHECK_WRITING`. Return JSON only.
+prefer `CHECK_WRITING`. "I don't understand" or "help me" is `HELP`. "Just tell
+me the answer" is `ASK_ANSWER`: encourage another try and never reveal the
+answer. Return JSON only.

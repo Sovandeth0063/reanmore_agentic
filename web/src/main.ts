@@ -1,9 +1,11 @@
+import { createBrowserSpeech } from "./browserSpeech.ts";
 import { createCamera } from "./camera.ts";
 import { createSessionClient } from "./client.ts";
 import { createRecorder } from "./recorder.ts";
 import { createTutorSession } from "./session.ts";
 import type { TutorSpeech } from "./session.ts";
 import { createVoxPocketSpeech } from "./speech.ts";
+import { ttsModeFromEnv } from "./speechMode.ts";
 import { createTutorDashboard } from "./ui.ts";
 
 const ui = createTutorDashboard();
@@ -11,13 +13,18 @@ const client = createSessionClient({
   fetch: (input, init) => window.fetch(input, init),
 });
 const camera = createCamera({ video: ui.videoElement });
-const speech = createVoxPocketSpeech({
-  fetchImpl: (input, init) => window.fetch(input, init),
-  audioFactory: (src) => new Audio(src),
-  createObjectUrl: (blob) => URL.createObjectURL(blob),
-  revokeObjectUrl: (url) => URL.revokeObjectURL(url),
-  browserFallback: createBrowserSpeech(),
-});
+// Browser `SpeechSynthesis` is the demo default and needs no service; the
+// VoxPocket service is opt-in with VITE_TTS=voxpocket.
+const speech: TutorSpeech =
+  ttsModeFromEnv(import.meta.env?.VITE_TTS) === "voxpocket"
+    ? createVoxPocketSpeech({
+        fetchImpl: (input, init) => window.fetch(input, init),
+        audioFactory: (src) => new Audio(src),
+        createObjectUrl: (blob) => URL.createObjectURL(blob),
+        revokeObjectUrl: (url) => URL.revokeObjectURL(url),
+        browserFallback: createBrowserSpeech(),
+      })
+    : createBrowserSpeech();
 
 let deliverUtterance: (pcm: ArrayBuffer) => void = () => undefined;
 let deliverSpeechStart: () => void = () => undefined;
@@ -62,36 +69,6 @@ const stopSession = (): void => {
 };
 window.addEventListener("pagehide", stopSession);
 window.addEventListener("beforeunload", stopSession);
-
-function createBrowserSpeech(): TutorSpeech {
-  return {
-    speak(text, handlers) {
-      if (!("speechSynthesis" in window)) {
-        handlers?.onEnd?.();
-        return;
-      }
-      const utterance = new SpeechSynthesisUtterance(text);
-      let finished = false;
-      const finish = (): void => {
-        if (finished) {
-          return;
-        }
-        finished = true;
-        handlers?.onEnd?.();
-      };
-      utterance.onend = finish;
-      utterance.onerror = finish;
-      // Reset the detector before the tutor's voice reaches the microphone.
-      handlers?.onStart?.();
-      window.speechSynthesis.speak(utterance);
-    },
-    cancel() {
-      if ("speechSynthesis" in window) {
-        window.speechSynthesis.cancel();
-      }
-    },
-  };
-}
 
 function startErrorMessage(error: unknown): string {
   if (error instanceof DOMException) {

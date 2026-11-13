@@ -32,10 +32,10 @@ EXERCISE = Exercise(
 STEP = EXERCISE.steps[0]
 
 SYSTEM_PROMPT = (
-    "You are a warm Grade 3 math tutor. Rewrite the given tutor line in one "
-    "or two short child-friendly sentences. Keep the same teaching move. Use "
-    "only numbers from the allowed list. Never state the final answer or "
-    'invent a number. Return JSON {"text": "..."}.'
+    "You are a warm Grade 3 math tutor. Rewrite the given tutor line in two "
+    "to four very short, child-friendly sentences. Keep the same teaching "
+    "move. Use only numbers from the allowed list. Never state the final "
+    'answer or invent a number. Return JSON {"text": "..."}.'
 )
 
 
@@ -172,6 +172,66 @@ class HostedRendererTests(unittest.TestCase):
         self.assertTrue(result.fallback)
         self.assertEqual(result.text, "Add 4 and 5.")
 
+    def test_hosted_renderer_rejects_the_answer_as_a_word(self) -> None:
+        text = "The answer is fifteen."
+        http = FakeHttp(json.dumps({"text": text}))
+
+        result = HostedRenderer(settings(), http).render(
+            request(allowed={4, 5}, template_text="Add 4 and 5.")
+        )
+
+        self.assertTrue(result.fallback)
+        self.assertEqual(result.text, "Add 4 and 5.")
+
+    def test_hosted_renderer_rejects_the_answer_as_digits(self) -> None:
+        text = "The answer is 15."
+        http = FakeHttp(json.dumps({"text": text}))
+
+        result = HostedRenderer(settings(), http).render(
+            request(allowed={4, 5}, template_text="Add 4 and 5.")
+        )
+
+        self.assertTrue(result.fallback)
+        self.assertEqual(result.text, "Add 4 and 5.")
+
+    def test_hosted_renderer_accepts_the_answer_once_it_is_allowed(self) -> None:
+        text = "That's right, 15."
+        http = FakeHttp(json.dumps({"text": text}))
+
+        result = HostedRenderer(settings(), http).render(
+            request(allowed={4, 5, 15}, template_text="Add 4 and 5.")
+        )
+
+        self.assertFalse(result.fallback)
+        self.assertEqual(result.text, text)
+        self.assertEqual(result.provider, "opencode")
+
+    def test_hosted_renderer_rejects_an_unlisted_number_word(self) -> None:
+        # Four sentences and under the character cap, so the only failure is
+        # "two": the strict guard covers number words, not just the answer.
+        texts = (
+            (
+                "Nice work trying! Let's add the last two numbers first. "
+                "What is 6 plus 9? Then tell me the total."
+            ),
+            (
+                "Nice start! Count on one more. "
+                "What is 6 plus 9?"
+            ),
+        )
+        for text in texts:
+            with self.subTest(text=text):
+                self.assertLessEqual(len(text), 240)
+                http = FakeHttp(json.dumps({"text": text}))
+
+                result = HostedRenderer(settings(), http).render(
+                    request(allowed={6, 9}, template_text="What is 6 plus 9?")
+                )
+
+                self.assertTrue(result.fallback)
+                self.assertEqual(result.text, "What is 6 plus 9?")
+                self.assertEqual(result.provider, "template")
+
     def test_hosted_renderer_falls_back_on_timeout_or_bad_json(self) -> None:
         cases = (
             ("timeout", FakeHttp(httpx.TimeoutException("slow"))),
@@ -225,8 +285,10 @@ class HostedRendererTests(unittest.TestCase):
         self.assertTrue(result.fallback)
         self.assertEqual(result.text, "Add 4 and 5.")
 
-    def test_hosted_renderer_falls_back_on_more_than_two_sentences(self) -> None:
-        http = FakeHttp('{"text": "Add 4. Add 5. Add 4 and 5."}')
+    def test_hosted_renderer_falls_back_on_more_than_four_sentences(self) -> None:
+        http = FakeHttp(
+            '{"text": "Add 4. Add 5. Add 4 and 5. Then check. Then smile."}'
+        )
 
         result = HostedRenderer(settings(), http).render(
             request(template_text="Add 4 and 5.")
@@ -242,6 +304,46 @@ class HostedRendererTests(unittest.TestCase):
 
         self.assertFalse(result.fallback)
         self.assertEqual(result.text, "First add 4 and 5. Then check your work.")
+
+    def test_hosted_renderer_accepts_three_sentences(self) -> None:
+        text = "Nice try! Start at 4 and count up 5 more. You can do it!"
+        http = FakeHttp(json.dumps({"text": text}))
+
+        result = HostedRenderer(settings(), http).render(
+            request(allowed={4, 5}, template_text="Add 4 and 5.")
+        )
+
+        self.assertFalse(result.fallback)
+        self.assertEqual(result.text, text)
+        self.assertEqual(result.provider, "opencode")
+
+    def test_hosted_renderer_accepts_four_sentences(self) -> None:
+        text = (
+            "Nice try! Start at 4 and count up 5 more. "
+            "Say it out loud. You can do it!"
+        )
+        http = FakeHttp(json.dumps({"text": text}))
+
+        result = HostedRenderer(settings(), http).render(
+            request(allowed={4, 5}, template_text="Add 4 and 5.")
+        )
+
+        self.assertFalse(result.fallback)
+        self.assertEqual(result.text, text)
+        self.assertEqual(result.provider, "opencode")
+        self.assertLessEqual(len(text), 240)
+
+    def test_hosted_renderer_rejects_three_sentences_with_a_forbidden_number(
+        self,
+    ) -> None:
+        http = FakeHttp('{"text": "Add 4 and 5. Then try 7. You can do it."}')
+
+        result = HostedRenderer(settings(), http).render(
+            request(allowed={4, 5}, template_text="Add 4 and 5.")
+        )
+
+        self.assertTrue(result.fallback)
+        self.assertEqual(result.text, "Add 4 and 5.")
 
     def test_hosted_renderer_rejects_empty_or_non_text_json(self) -> None:
         contents = (
@@ -305,7 +407,7 @@ class HostedRendererTests(unittest.TestCase):
             url,
             "https://opencode.ai/inference/go/openai/v1/chat/completions",
         )
-        self.assertEqual(sent["timeout"], 1.2)
+        self.assertEqual(sent["timeout"], 3.0)
         self.assertFalse(sent["json"]["stream"])
         self.assertEqual(
             sent["json"]["response_format"], {"type": "json_object"}

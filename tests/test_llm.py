@@ -185,6 +185,35 @@ class LlmTests(unittest.TestCase):
                 )
                 self.assertEqual(intent.intent, name)
 
+    def test_llm_accepts_help_and_ask_answer_intents(self) -> None:
+        cases = (
+            ("HELP", "I don't understand this step", None, None),
+            ("ASK_ANSWER", "just tell me the answer", None, None),
+            ("ASK_ANSWER", "tell me", "15", None),
+        )
+        for name, transcript, candidate, step in cases:
+            with self.subTest(intent=name, transcript=transcript):
+                data = {"intent": name, "candidate_answer": candidate}
+                if step is not None:
+                    data["guidance_step"] = step
+                client = OllamaClient(self.settings(), FakeHttp(data))
+                intent = client.interpret(
+                    transcript, {}, {"steps": [{"index": 1}]}
+                )
+                self.assertEqual(intent.intent, name)
+
+    def test_help_and_ask_answer_keep_slot_validation(self) -> None:
+        for data in (
+            {"intent": "HELP", "exercise_id": "C1"},
+            {"intent": "ASK_ANSWER", "guidance_step": 9},
+        ):
+            with self.subTest(data=data):
+                client = OllamaClient(self.settings(), FakeHttp(data))
+                with self.assertRaises(IntentError):
+                    client.interpret(
+                        "help", {}, {"steps": [{"index": 1}]}
+                    )
+
     def test_rejects_unknown_intent(self) -> None:
         client = OllamaClient(self.settings(), FakeHttp({"intent": "HINT"}))
         with self.assertRaises(IntentError):
@@ -262,6 +291,45 @@ class LlmTests(unittest.TestCase):
         self.assertIn("section", system)
         self.assertIn("number", system)
         self.assertIn("Never state an unverified number", system)
+
+    def test_system_prompt_teaches_the_new_conversation_intents(self) -> None:
+        captured = {}
+
+        class CapturingHttp:
+            def post(self, *args, **kwargs):
+                captured.update(kwargs["json"])
+                return FakeResponse({"intent": "UNCLEAR"})
+
+        OllamaClient(self.settings(), CapturingHttp()).interpret(
+            "hello", {}, {"steps": []}
+        )
+        system = captured["messages"][0]["content"]
+        self.assertIn("HELP", system)
+        self.assertIn("ASK_ANSWER", system)
+        self.assertIn("never reveal the answer", system.lower())
+        self.assertIn("I don't understand", system)
+
+    def test_system_prompt_treats_a_bare_number_as_a_spoken_answer(self) -> None:
+        captured = {}
+
+        class CapturingHttp:
+            def post(self, *args, **kwargs):
+                captured.update(kwargs["json"])
+                return FakeResponse({"intent": "UNCLEAR"})
+
+        OllamaClient(self.settings(), CapturingHttp()).interpret(
+            "hello", {}, {"steps": []}
+        )
+        system = " ".join(captured["messages"][0]["content"].split())
+        self.assertIn(
+            "When an exercise is already active and the student says only a "
+            "number, that is a spoken answer",
+            system,
+        )
+        self.assertIn("candidate_answer", system)
+        self.assertIn(
+            "CHOOSE_EXERCISE only when the student is choosing", system
+        )
 
 
 class OpenAIIntentClientTests(unittest.TestCase):

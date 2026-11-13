@@ -62,7 +62,10 @@ class DefaultEngineFactoryTests(unittest.TestCase):
 
     def _load(
         self, environment: dict[str, str] | None = None
-    ) -> tuple[FakeEngine, list[tuple[tuple[object, ...], dict[str, object]]]]:
+    ) -> tuple[
+        tts.VoxCPMEngine,
+        list[tuple[tuple[object, ...], dict[str, object]]],
+    ]:
         calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
         class FakeVoxCPM:
@@ -87,7 +90,9 @@ class DefaultEngineFactoryTests(unittest.TestCase):
     def test_default_factory_loads_the_cached_model_on_cuda(self) -> None:
         engine, calls = self._load()
 
-        self.assertIsInstance(engine, FakeEngine)
+        self.assertIsInstance(engine, tts.VoxCPMEngine)
+        self.assertIsInstance(engine.model, FakeEngine)
+        self.assertEqual(engine.sample_rate, 44100)
         self.assertEqual(len(calls), 1)
         args, kwargs = calls[0]
         self.assertEqual(args, (tts.MODEL_ID,))
@@ -101,6 +106,25 @@ class DefaultEngineFactoryTests(unittest.TestCase):
                 "local_files_only": True,
             },
         )
+
+    def test_real_adapter_disables_badcase_retries(self) -> None:
+        class RetryingModel:
+            sample_rate = 44100
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, bool]] = []
+
+            def generate(self, text: str, retry_badcase: bool = True):
+                self.calls.append((text, retry_badcase))
+                return [0.25]
+
+        model = RetryingModel()
+        engine = tts.VoxCPMEngine(model)
+
+        samples = engine.generate("Hello.")
+
+        self.assertEqual(samples, [0.25])
+        self.assertEqual(model.calls, [("Hello.", False)])
 
     def test_download_flag_allows_the_hub(self) -> None:
         _, calls = self._load({"VOXPOCKET_ALLOW_DOWNLOAD": "1"})
@@ -117,6 +141,7 @@ class TtsServerTests(unittest.TestCase):
     def test_module_import_does_not_import_voxcpm(self) -> None:
         # The repository environment must keep its light dependency set; the
         # model stack is imported only inside the lazy default factory.
+        self.assertTrue(hasattr(tts, "VoxCPMEngine"))
         self.assertNotIn("voxcpm", sys.modules)
 
     def test_health_reports_readiness_without_loading_the_model(self) -> None:
@@ -182,6 +207,29 @@ class TtsServerTests(unittest.TestCase):
         )
         # Two chunks, one sample each, concatenated in sentence order.
         self.assertEqual(read_wav(response.content)[3], 2)
+
+    def test_tutor_request_keeps_the_voice_prompt(self) -> None:
+        engine = FakeEngine([0.1])
+        with TestClient(tts.create_app(lambda: engine)) as client:
+            response = client.post(
+                "/tts",
+                json={"text": "Count to ten.", "voice_prompt": True},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            engine.texts, [f"{tts.VOICE_PROMPT} Count to ten."]
+        )
+
+    def test_student_request_omits_the_voice_prompt(self) -> None:
+        engine = FakeEngine([0.1])
+        with TestClient(tts.create_app(lambda: engine)) as client:
+            response = client.post(
+                "/tts", json={"text": "nine", "voice_prompt": False}
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(engine.texts, ["nine"])
 
     def test_one_long_sentence_is_not_dropped(self) -> None:
         engine = FakeEngine([0.0])

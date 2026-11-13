@@ -2,16 +2,18 @@
 
 ## Start the stack
 
-Run these from the repository root, in three terminals:
+Run these from the repository root, in two terminals:
 
 1. Backend session API: `py -3.10 -m uvicorn server.session_api:app --host 127.0.0.1 --port 8000`
-2. VoxPocket TTS: `C:\Users\ASUS\voxcpm-tts\Scripts\python.exe scripts\voxpocket_tts_server.py --host 127.0.0.1 --port 8001`
-3. Browser client: `cd web && npm install && npm run dev`
+2. Browser client: `cd web && npm install && npm run dev`
 
 The Vite dev server serves HTTPS with a self-signed development certificate and
 proxies `/sessions` to the API on `127.0.0.1:8000` and `/tts` to the voice
-service on `127.0.0.1:8001`. Stop all three terminals with Ctrl+C after the
-demo.
+service on `127.0.0.1:8001`. Stop both terminals with Ctrl+C after the demo.
+
+The tutor speaks with the browser's `SpeechSynthesis` by default, so the demo
+needs no voice service. VoxPocket is optional (see **The tutor voice**); only a
+`VITE_TTS=voxpocket` build uses it.
 
 ## Laptop webcam and audio
 
@@ -48,25 +50,105 @@ LiveKit, and no network camera.
 
 ### The tutor voice
 
-VoxPocket is the primary voice and runs as its own service. It uses the
-isolated environment at `C:\Users\ASUS\voxcpm-tts`; the backend environment has
-no `voxcpm` or torch CUDA packages. The model cache is
+The demo voice is the browser's `SpeechSynthesis`. It needs no service, no
+warm-up, and no network, so the rehearsal depends only on the backend and the
+browser client. The exact voice follows the laptop's browser and OS settings.
+
+VoxPocket is an **optional** higher-quality voice. To use it, start its service
+in a third terminal and opt the web client in before starting Vite:
+
+1. Copy `web/.env.example` to `web/.env` and set `VITE_TTS=voxpocket`. Any other
+   value, or no file, keeps the browser voice.
+2. Start `C:\Users\ASUS\voxcpm-tts\Scripts\python.exe scripts\voxpocket_tts_server.py --host 127.0.0.1 --port 8001`.
+3. Restart `npm run dev` so Vite picks up the value, then say one short line to
+   warm the model.
+
+The service uses the isolated environment at `C:\Users\ASUS\voxcpm-tts`; the
+backend environment has no `voxcpm` or torch CUDA packages. The model cache is
 `C:\Users\ASUS\voxcpm-hf` (override with `VOXPOCKET_CACHE_DIR`), it needs no
 API key, and it serves 44.1 kHz PCM16 WAV. The first `/tts` request loads the
-model and is slow, so say one short line before the rehearsal to warm it up.
-`GET http://127.0.0.1:8001/health` reports `loaded`, `sample_rate`, and the
-model id without loading anything; query it with `curl` from a terminal.
+model and is slow. `GET http://127.0.0.1:8001/health` reports `loaded`,
+`sample_rate`, and the model id without loading anything; query it with `curl`
+from a terminal.
 
-- **No tutor voice:** confirm the third terminal is running and the backend is
-  on port 8000. If the TTS service is down or playback fails, the dashboard
-  falls back to browser `SpeechSynthesis` automatically, so the line is still
-  spoken. Do not stop the demo to debug the voice.
+- **No tutor voice:** the browser voice is the default, so check the laptop
+  volume and the browser tab first. In `voxpocket` mode, confirm the third
+  terminal is running and the value in `web/.env` is exactly `voxpocket`. A
+  failed request or playback falls back to browser `SpeechSynthesis`
+  automatically, so the line is still spoken. Do not stop the demo to debug the
+  voice.
 - **Speech stops mid-line:** the dashboard cancels VoxPocket audio when the
   student starts talking or a new line arrives. That is intended.
+- **The VoxPocket runner is a diagnostic:** `scripts/run_scenario.py --mode
+  voice` exercises the real VoxPocket path, but it is not the demo path. The
+  text scenario JSON remains the agentic and latency evidence.
 - **Speech-to-text errors:** the backend runs faster-whisper on the CPU
   (`WHISPER_DEVICE=cpu`, `WHISPER_COMPUTE_TYPE=int8`). Do not switch it to CUDA
   for the demo: the CUDA build fails on this laptop without
   `cublas64_12.dll`, and the GPU belongs to VoxPocket.
+
+### Hybrid guided behavior and renderer fallback
+
+The demo `.env` sets `TUTOR_FLOW=guided` and `TUTOR_RENDERER=template`. The safe
+defaults are `choice`/`template`, so a checkout without `.env` behaves exactly
+as before. The hosted `llm` renderer is opt-in because the live route can stall.
+
+- **Guided flow:** after placement is confirmed, the tutor summarizes the sheet,
+  starts at A1, asks one step at a time, praises a correct answer, and
+  auto-advances through B6. It still never reveals a final answer and still
+  verifies every number with the calculator. `choice` keeps the spoken exercise
+  choice instead.
+- **Renderer fallback:** `llm` only rephrases the vetted line. It may use
+  verified numbers only and falls back to the deterministic template after
+  3.0 s, on an HTTP or JSON failure, or when the reply invents a number or is
+  too long. A fallback is invisible to the child and appears as a
+  `tutor.render` tool row with the template provider.
+- **Switching:** set the two variables before starting the backend, then
+  restart it. Do not change either value mid-session. The demo uses
+  `template`; the hosted `llm` path is opt-in and can be slow.
+
+### Scenario JSON check
+
+`scripts/run_scenario.py` drives the checked-in 16-line scenario and writes the
+evidence JSON. Text mode is deterministic and uses the worksheet fixture; it is
+the demo's agentic and latency evidence. Voice mode is a **diagnostic** pass over
+the real vision, speech-to-text, intent, and VoxPocket text-to-speech path; it is
+not the demo path, because the dashboard speaks with the browser voice by
+default. Voice needs the backend on port 8000 and the VoxPocket service on port
+8001 already running. Warm the voice with one short line first and confirm
+`GET http://127.0.0.1:8001/health` reports `status: ok`; the runner checks both
+services and refuses to start if either is absent.
+
+```bash
+py -3.10 scripts/run_scenario.py --mode text \
+  --out docs/scenarios/results/2026-11-13-ip3_homework2-text.json
+
+py -3.10 scripts/run_scenario.py --mode voice \
+  --out docs/scenarios/results/2026-11-13-ip3_homework2-voice.json
+```
+
+An optional `--mode both` runs text with the template renderer and voice with
+the configured renderer, then reports `text_diff_count`: it compares status,
+capture request, exercise id, and milestones, not exact wording.
+
+Inspect the JSON before trusting the run:
+
+- `worksheet.items` is 12 and `worksheet.placement` is `ready`;
+- `milestones.worksheet_recognized`, `all_12_covered`, and `auto_advanced` are
+  true, and `final_answer_leaked` is false;
+- `errors` is empty;
+- text `summary.turn_p50_ms` and `turn_p95_ms` show the warm-turn cost;
+- voice `turns[*].stt_ms`, `intent_ms`, `render_ms`, `tts_ms`, and
+  `audio_seconds` show the real stage costs, and
+  `summary.tutor_audio_seconds` is the spoken total;
+- `greeting.tts_ms` and `greeting.audio_seconds` show the opening line's
+  synthesis; the first `/tts` request also loads the model;
+- `--mode both` reports `text_diff_count`; zero means the two passes agree on
+  structure and milestones (the wording may differ).
+
+The runner exits non-zero when `errors` is non-empty or a required milestone
+fails. `--audio-dir` is only for debugging, must be outside the repository, and
+no audio is committed.
 
 ### Before a full turn
 
@@ -95,10 +177,12 @@ debug.
   content, the Gemini path sends `inline_data`.
 - Run `python scripts/check_providers.py`; resolve every failed check. Add
   `--live` to send `docs/image.png` to the vision provider.
-- Start the VoxPocket TTS service from `C:\Users\ASUS\voxcpm-tts` and speak one
-  short line to warm the model; `http://127.0.0.1:8001/health` should report
-  `loaded: true` and `sample_rate: 44100`. The backend stays on CPU int8
-  speech-to-text.
+- Start the optional VoxPocket service from `C:\Users\ASUS\voxcpm-tts`, set
+  `VITE_TTS=voxpocket` in `web/.env`, and speak one short line to warm the
+  model only if the rehearsal uses the VoxPocket voice.
+  `http://127.0.0.1:8001/health` should report `loaded: true` and
+  `sample_rate: 44100`. The backend stays on CPU int8 speech-to-text. The
+  default browser-voice demo skips this step and the third terminal entirely.
 - Print `docs/image.png` clearly on white paper.
 - Use a dark marker and even lighting.
 - Mount the external webcam on a stand so the full sheet and writing area fit
@@ -109,17 +193,21 @@ debug.
 - Confirm the laptop microphone and speaker work; use headphones or speaker
   placement to avoid tutor-voice feedback.
 - Keep the laptop plugged in and awake; close other camera apps.
+- Run the text scenario once (`--mode text`) and check the JSON milestones; it
+  is the evidence kept for the demo. The voice scenario is an optional
+  VoxPocket diagnostic, not demo evidence; keep its JSON only if you run it.
 - Prepare a backup recording or screenshots.
 
 ## Script
 
 1. **0:00-0:45:** Open the dashboard on the laptop, show the sheet in the
-   webcam, press Start, and confirm the live Answer Sheet preview. The browser
-   sends one review image of the sheet.
+   webcam, press Start, and confirm the live Answer Sheet preview. The child
+   asks for a review; the browser then sends one review image of the sheet.
 2. **0:45-1:30:** Let the tutor review the sheet. If it asks for repositioning,
-   adjust once and retry; then listen to the A/B summary (A has addition and
-   subtraction, B has multiplication and division) and the choice question.
-3. **1:30-2:00:** Choose a pre-tested exercise by voice.
+   adjust once and retry; then listen to the A/B summary. In guided mode it
+   starts at A1; in choice mode it asks which section and item to start with.
+3. **1:30-2:00:** In guided mode, answer A1's first step by voice. In choice
+   mode, choose a pre-tested exercise by voice.
 4. **2:00-3:15:** Write while the tutor guides one step at a time.
 5. **3:15-3:45:** Say “check my writing.” The laptop captures a fresh image of
    the written work; the tutor locates the selected item, reads only that
@@ -140,9 +228,15 @@ debug.
   the fixed response catalog and calculator.
 - Vision unavailable: use the spoken-only fallback or the backup recording; the
   tutor never claims to have read the paper.
-- TTS service unavailable or playback fails: the dashboard speaks the tutor line
-  with browser `SpeechSynthesis`; the session continues. Restart the voice
-  service only between turns, and never restart the backend mid-demo.
+- No tutor voice: the browser voice is the default, so check the laptop volume
+  and the browser tab. In the optional `VITE_TTS=voxpocket` mode, a missing
+  service or failed playback falls back to browser `SpeechSynthesis`; the
+  session continues. Restart the voice service only between turns, and never
+  restart the backend mid-demo.
+- Scenario voice run stops at the health check: start the missing service and
+  fix its port; the runner never starts services. If it stops after a turn with
+  `db_missing`, `db_unreadable`, or `timings_missing`, start the backend and the
+  runner from the repository root so both resolve the same `DB_URL`.
 - Unclear handwriting: ask the student to repeat or rewrite; never correct it.
 - Reconnect: keep the same session id so the chosen exercise and step resume.
 

@@ -579,6 +579,196 @@ class TutorTests(unittest.TestCase):
         # Guide --> StudentWorking, so the next check needs no special edge.
         self.assertEqual(self.session.state, TutorState.STUDENT_WORKING)
 
+    def _guided_at(self, exercise_id: str) -> TutorSession:
+        session = self._new_session(f"guided-{exercise_id}")
+        session.start(_sheet(session.lesson))
+        session.choose(exercise_id)
+        self.assertEqual(session.state, TutorState.STUDENT_WORKING)
+        return session
+
+    def test_intermediate_answer_advances_the_step_and_hints(self) -> None:
+        session = self._guided_at("A1")
+
+        outcome = session.check_with_mode("nine")
+
+        self.assertEqual(outcome.mode, "hint")
+        self.assertIsNotNone(outcome.step)
+        self.assertEqual(outcome.step.index, 2)
+        self.assertEqual(outcome.step.expected_intermediate, 15)
+        self.assertFalse(outcome.completed)
+        self.assertFalse(outcome.result.correct)
+        self.assertEqual(outcome.text, session.lesson.get("A1").steps[1].prompt)
+        saved = session.memory.get(session.session_id)
+        self.assertEqual(saved.current_step, 2)
+        self.assertEqual(saved.attempts, 0)
+        self.assertEqual(session.state, TutorState.STUDENT_WORKING)
+
+    def test_final_answer_is_praise_and_completes(self) -> None:
+        session = self._guided_at("A1")
+
+        outcome = session.check_with_mode("fifteen")
+
+        self.assertEqual(outcome.mode, "praise")
+        self.assertTrue(outcome.completed)
+        self.assertIsNone(outcome.step)
+        self.assertTrue(outcome.result.correct)
+        self.assertEqual(session.state, TutorState.PRAISE)
+
+    def test_single_step_exercise_accepts_its_answer(self) -> None:
+        session = self._guided_at("A4")
+
+        outcome = session.check_with_mode("sixty-three")
+
+        self.assertEqual(outcome.mode, "praise")
+        self.assertTrue(outcome.completed)
+        self.assertEqual(session.state, TutorState.PRAISE)
+
+    def test_early_final_answer_is_accepted(self) -> None:
+        session = self._guided_at("A2")
+        self.assertEqual(session.memory.get(session.session_id).current_step, 1)
+
+        outcome = session.check_with_mode("eighty-seven")
+
+        self.assertEqual(outcome.mode, "praise")
+        self.assertTrue(outcome.completed)
+        self.assertEqual(session.state, TutorState.PRAISE)
+
+    def test_first_wrong_answer_hints_and_repeated_wrong_explains(self) -> None:
+        session = self._guided_at("A1")
+
+        first = session.check_with_mode("14")
+        self.assertEqual(first.mode, "hint")
+        self.assertFalse(first.completed)
+        self.assertEqual(first.step.index, 1)
+        self.assertEqual(session.memory.get(session.session_id).attempts, 1)
+
+        second = session.check_with_mode("13")
+        self.assertEqual(second.mode, "explain")
+        self.assertFalse(second.completed)
+        self.assertEqual(session.memory.get(session.session_id).attempts, 2)
+        self.assertEqual(session.state, TutorState.STUDENT_WORKING)
+
+    def test_step_advance_resets_hint_escalation(self) -> None:
+        session = self._guided_at("A1")
+        session.check_with_mode("nine")
+        self.assertEqual(session.memory.get(session.session_id).attempts, 0)
+
+        first = session.check_with_mode("11")
+        self.assertEqual(first.mode, "hint")
+        self.assertEqual(session.memory.get(session.session_id).attempts, 1)
+        self.assertEqual(first.step.index, 2)
+        self.assertIn("Add 6 to 9", first.text)
+
+        second = session.check_with_mode("12")
+        self.assertEqual(second.mode, "explain")
+        self.assertEqual(session.memory.get(session.session_id).attempts, 2)
+
+    def test_check_wrapper_returns_the_outcome_text_and_result(self) -> None:
+        session = self._guided_at("A1")
+
+        text, result = session.check("nine")
+
+        self.assertEqual(text, session.lesson.get("A1").steps[1].prompt)
+        self.assertFalse(result.correct)
+        self.assertEqual(session.memory.get(session.session_id).current_step, 2)
+
+    def test_check_in_praise_is_noop_and_offers_the_next_choice(self) -> None:
+        session = self._guided_at("A1")
+        session.check_with_mode("15")
+
+        outcome = session.check_with_mode("15")
+
+        self.assertEqual(outcome.mode, "noop")
+        self.assertIsNone(outcome.result)
+        self.assertFalse(outcome.completed)
+        self.assertEqual(outcome.text, select_response("ask_choice"))
+        self.assertEqual(session.state, TutorState.NEXT_EXERCISE)
+
+    def test_begin_guided_presents_a1_without_asking_for_a_choice(self) -> None:
+        session = self._new_session("begin-guided")
+        exercise = session.lesson.get("A1")
+
+        text = session.begin_guided(_sheet(session.lesson))
+
+        self.assertIn(select_response("worksheet_summary"), text)
+        self.assertEqual(
+            text,
+            select_response("worksheet_summary")
+            + f" Let's start with A1: {exercise.problem}."
+            + " "
+            + exercise.steps[0].prompt,
+        )
+        self.assertNotIn("Let's work on", text)
+        self.assertIn("A1", text)
+        self.assertIn(exercise.problem, text)
+        self.assertIn(exercise.steps[0].prompt, text)
+        self.assertNotIn(select_response("ask_choice"), text)
+        self.assertEqual(session.state, TutorState.STUDENT_WORKING)
+        self.assertEqual(
+            session.memory.get("begin-guided").chosen_exercise, "A1"
+        )
+
+    def test_begin_guided_from_a_confirmed_placement_starts_at_a1(self) -> None:
+        self.store.update("s1", placement_confirmed=True)
+        restored = self._new_session("s1")
+        self.assertEqual(restored.state, TutorState.CHOOSE_EXERCISE)
+
+        text = restored.begin_guided()
+
+        self.assertIn("A1", text)
+        self.assertEqual(self.store.get("s1").chosen_exercise, "A1")
+        self.assertEqual(self.store.get("s1").current_step, 1)
+        self.assertEqual(restored.state, TutorState.STUDENT_WORKING)
+
+    def test_begin_guided_keeps_the_placement_gate(self) -> None:
+        session = self._new_session("guided-gate")
+
+        text = session.begin_guided(_sheet(session.lesson, confidence=0.4))
+
+        self.assertEqual(text, placement_prompt(PLACEMENT_UNREADABLE))
+        self.assertEqual(session.state, TutorState.WAITING_FOR_PLACEMENT)
+        self.assertIsNone(session.memory.get("guided-gate").chosen_exercise)
+
+    def test_advance_guided_goes_a1_to_a2(self) -> None:
+        session = self._guided_at("A1")
+        session.check_with_mode("fifteen")
+        exercise = session.lesson.get("A2")
+
+        text = session.advance_guided()
+
+        self.assertEqual(
+            text,
+            f"Next is A2: {exercise.problem}. {exercise.steps[0].prompt}",
+        )
+        self.assertNotIn("Let's work on", text)
+        self.assertNotIn(select_response("ask_choice"), text)
+        self.assertIn("A2", text)
+        self.assertIn(exercise.problem, text)
+        self.assertIn(exercise.steps[0].prompt, text)
+        saved = session.memory.get(session.session_id)
+        self.assertEqual(saved.chosen_exercise, "A2")
+        self.assertEqual(saved.current_step, 1)
+        self.assertEqual(saved.attempts, 0)
+        self.assertEqual(session.state, TutorState.STUDENT_WORKING)
+
+    def test_advance_guided_wraps_up_after_b6(self) -> None:
+        session = self._guided_at("B6")
+        session.check_with_mode("five")
+
+        text = session.advance_guided()
+
+        self.assertEqual(text, select_response("wrap_up"))
+        self.assertEqual(session.state, TutorState.WRAP_UP)
+
+    def test_advance_guided_requires_a_completed_exercise(self) -> None:
+        with self.assertRaises(InvalidTransition):
+            self.session.advance_guided()
+
+        session = self._guided_at("A1")
+        with self.assertRaises(InvalidTransition):
+            session.advance_guided()
+        self.assertEqual(session.state, TutorState.STUDENT_WORKING)
+
     def test_start_does_not_log_duplicate_vision_rows(self) -> None:
         self.session.start(_sheet(self.session.lesson))
         rows = self.store.connection.execute(
